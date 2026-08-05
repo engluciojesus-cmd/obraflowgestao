@@ -1,0 +1,18 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body {
+    @apply bg-background text-foreground font-sans antialiased;
+  }
+}
+
+@layer components {
+  .field {
+    @apply w-full rounded-lg border border-line bg-side/50 px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:border-cta focus:outline-none focus:ring-1 focus:ring-cta transition;
+  }
+  .btn-cta {
+    @apply rounded-lg bg-cta px-4 py-2.5 text-sm font-bold text-cta-foreground hover:bg-cta/90 transition;
+  }
+}
