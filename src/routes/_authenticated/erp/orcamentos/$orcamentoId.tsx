@@ -26,7 +26,7 @@ function OrcamentoBuilder() {
   const [orcamento, setOrcamento] = useState<Orcamento | null>(null);
   const [fases, setFases] = useState<OrcamentoFase[]>([]);
   const [servicos, setServicos] = useState<ServicoComItens[]>([]);
-  const [consumido, setConsumido] = useState(0);
+  const [comprometido, setComprometido] = useState(0);
   const [loading, setLoading] = useState(true);
   const [showServicoForm, setShowServicoForm] = useState<string | null>(null); // fase_id ou "sem-fase"
   const [showFaseForm, setShowFaseForm] = useState(false);
@@ -54,32 +54,59 @@ function OrcamentoBuilder() {
     ]);
     setOrcamento(orc);
     setFases(fasesData || []);
-    setServicos(
-      (servicosData || []).map((s: any) => ({
-        ...s,
-        itens: (s.itens || []).sort((a: OrcamentoItem, b: OrcamentoItem) => a.ordem - b.ordem),
-      }))
-    );
+    const servicosComItens = (servicosData || []).map((s: any) => ({
+      ...s,
+      itens: (s.itens || []).sort((a: OrcamentoItem, b: OrcamentoItem) => a.ordem - b.ordem),
+    }));
+    setServicos(servicosComItens);
 
     // consumo: soma dos itens de pedido vinculados a itens deste orçamento (pedidos não cancelados)
-    const servicoIds = (servicosData || []).map((s: any) => s.id);
-    if (servicoIds.length > 0) {
-      const itemIds = (servicosData || []).flatMap((s: any) => (s.itens || []).map((i: any) => i.id));
-      if (itemIds.length > 0) {
-        const { data: pedItens } = await supabase
-          .from("pedido_itens")
-          .select("quantidade, valor_unitario, pedido:pedidos(status)")
-          .in("orcamento_item_id", itemIds);
-        const cons = (pedItens || [])
-          .filter((pi: any) => pi.pedido?.status !== "CANCELADO")
-          .reduce((s: number, pi: any) => s + Number(pi.quantidade) * Number(pi.valor_unitario), 0);
-        setConsumido(cons);
-      } else {
-        setConsumido(0);
+    const itemIds = servicosComItens.flatMap((s) => (s.itens || []).map((i: any) => i.id));
+    const servicoIds = servicosComItens.map((s) => s.id);
+    const itemValorMap = new Map<string, number>();
+    for (const s of servicosComItens) {
+      for (const it of s.itens || []) {
+        itemValorMap.set(it.id, itemTotal(it));
       }
-    } else {
-      setConsumido(0);
     }
+
+    const compPedidos = itemIds.length > 0
+      ? ((await supabase
+          .from("pedido_itens")
+          .select("quantidade, valor_unitario, orcamento_item_id, pedido:pedidos(status)")
+          .in("orcamento_item_id", itemIds)).data || [])
+          .filter((pi: any) => pi.pedido?.status !== "CANCELADO")
+          .reduce((s: number, pi: any) => {
+            const quantidade = Number(pi.quantidade) || 0;
+            const valorUnitario = Number(pi.valor_unitario) || 0;
+            const fallback = itemValorMap.get(pi.orcamento_item_id) || 0;
+            return s + quantidade * (valorUnitario > 0 ? valorUnitario : fallback);
+          }, 0)
+      : 0;
+
+    // medicoes por item/servico — dedupe por id
+    const medicoesMap = new Map<string, any>();
+    if (itemIds.length > 0) {
+      const { data } = await supabase
+        .from("medicoes")
+        .select("id, valor, orcamento_item_id, servico_id")
+        .in("orcamento_item_id", itemIds);
+      for (const m of data || []) medicoesMap.set(m.id, m);
+    }
+    if (servicoIds.length > 0) {
+      const { data } = await supabase
+        .from("medicoes")
+        .select("id, valor, orcamento_item_id, servico_id")
+        .in("servico_id", servicoIds);
+      for (const m of data || []) if (!medicoesMap.has(m.id)) medicoesMap.set(m.id, m);
+    }
+    const compMedicoes = Array.from(medicoesMap.values()).reduce((s: number, m: any) => {
+      if (m.orcamento_item_id && itemIds.includes(m.orcamento_item_id)) return s + Number(m.valor || 0);
+      if (m.servico_id && servicoIds.includes(m.servico_id)) return s + Number(m.valor || 0);
+      return s;
+    }, 0);
+
+    setComprometido(compPedidos + compMedicoes);
 
     setLoading(false);
   }
@@ -92,11 +119,11 @@ function OrcamentoBuilder() {
   // sincroniza valor/percentual_consumo na tabela orcamentos (rollup)
   useEffect(() => {
     if (!orcamento || loading) return;
-    const pct = total > 0 ? Math.round((consumido / total) * 100) : 0;
+    const pct = total > 0 ? Math.round((comprometido / total) * 100) : 0;
     if (Number(orcamento.valor) !== total || orcamento.percentual_consumo !== pct) {
       supabase.from("orcamentos").update({ valor: total, percentual_consumo: pct }).eq("id", orcamento.id);
     }
-  }, [total, consumido, orcamento, loading]);
+  }, [total, comprometido, orcamento, loading]);
 
   async function setStatus(status: OrcamentoStatus) {
     await supabase.from("orcamentos").update({ status }).eq("id", orcamentoId);
@@ -262,15 +289,15 @@ function OrcamentoBuilder() {
           <p className="mt-1 text-lg font-bold">{money(total)}</p>
         </div>
         <div className="rounded-lg border border-line bg-card p-4">
-          <p className="text-xs font-semibold text-muted-foreground uppercase">Consumido</p>
-          <p className="mt-1 text-lg font-bold">{money(consumido)}</p>
-          <p className={`text-xs ${total > 0 && consumido / total > 1 ? "text-err font-semibold" : "text-muted-foreground"}`}>
-            {total > 0 ? Math.round((consumido / total) * 100) : 0}%
+          <p className="text-xs font-semibold text-muted-foreground uppercase">Comprometido</p>
+          <p className="mt-1 text-lg font-bold">{money(comprometido)}</p>
+          <p className={`text-xs ${total > 0 && comprometido / total > 1 ? "text-err font-semibold" : "text-muted-foreground"}`}>
+            {total > 0 ? Math.round((comprometido / total) * 100) : 0}%
           </p>
         </div>
         <div className="rounded-lg border border-line bg-card p-4">
-          <p className="text-xs font-semibold text-muted-foreground uppercase">Falta</p>
-          <p className="mt-1 text-lg font-bold">{money(Math.max(total - consumido, 0))}</p>
+          <p className="text-xs font-semibold text-muted-foreground uppercase">Saldo</p>
+          <p className="mt-1 text-lg font-bold">{money(Math.max(total - comprometido, 0))}</p>
         </div>
       </div>
 

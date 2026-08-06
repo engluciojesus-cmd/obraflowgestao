@@ -1,4 +1,4 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useActiveCompany } from "@/hooks/useAuth";
@@ -12,6 +12,7 @@ export const Route = createFileRoute("/_authenticated/erp/financeiro")({
 
 function FinanceiroPage() {
   const { companyId, loading: companyLoading } = useActiveCompany();
+  const navigate = useNavigate();
   const [lancamentos, setLancamentos] = useState<Lancamento[]>([]);
   const [medicoes, setMedicoes] = useState<Medicao[]>([]);
   const [fornecedores, setFornecedores] = useState<Fornecedor[]>([]);
@@ -50,6 +51,49 @@ function FinanceiroPage() {
   }
 
   async function setLancStatus(l: Lancamento, status: LancamentoStatus) {
+    // When marking as PAGA, if this lancamento is linked to a pedido, apply debits to orcamento_itens (modo='verba')
+    if (status === "PAGA") {
+      const { data: lanc } = await supabase.from("lancamentos").select("*").eq("id", l.id).maybeSingle();
+      const pedidoId = (lanc as any)?.pedido_id;
+      if (pedidoId) {
+        const { data: itens } = await supabase
+          .from("pedido_itens")
+          .select("orcamento_item_id, quantidade, valor_unitario")
+          .eq("pedido_id", pedidoId);
+
+        for (const it of (itens || []) as any[]) {
+          if (!it.orcamento_item_id) continue;
+
+          // skip if this lancamento already recorded a debit for this item
+          const { data: existente } = await supabase
+            .from("orcamento_debitos")
+            .select("id")
+            .eq("lancamento_id", l.id)
+            .eq("orcamento_item_id", it.orcamento_item_id)
+            .maybeSingle();
+          if (existente) continue;
+
+          const { data: orcIt } = await supabase
+            .from("orcamento_itens")
+            .select("id, modo, valor_verba")
+            .eq("id", it.orcamento_item_id)
+            .maybeSingle();
+          if (!orcIt) continue;
+          if (orcIt.modo === "verba") {
+            const decrement = Number(it.quantidade || 0) * Number(it.valor_unitario || 0);
+            const newValor = Math.max(0, Number(orcIt.valor_verba || 0) - decrement);
+            await supabase.from("orcamento_itens").update({ valor_verba: newValor }).eq("id", orcIt.id);
+            await supabase.from("orcamento_debitos").insert({
+              lancamento_id: l.id,
+              pedido_id: pedidoId,
+              orcamento_item_id: it.orcamento_item_id,
+              valor: decrement,
+            });
+          }
+        }
+      }
+    }
+
     await supabase.from("lancamentos").update({ status }).eq("id", l.id);
     load();
   }
@@ -157,6 +201,12 @@ function FinanceiroPage() {
                       <p className="font-semibold text-sm">{l.titulo}</p>
                       <p className="text-xs text-muted-foreground">
                         {l.fornecedor?.nome || "—"} · {l.obra?.nome || "—"}
+                        {l.processo_numero && (
+                          <span className="block">Processo: {l.processo_numero}</span>
+                        )}
+                        {l.nota_numero && (
+                          <span className="block">Nota: {l.nota_numero}</span>
+                        )}
                       </p>
                       <p className="text-xs text-muted-foreground">
                         Venc: {l.vencimento ? new Date(l.vencimento).toLocaleDateString("pt-BR") : "—"}
@@ -179,6 +229,20 @@ function FinanceiroPage() {
                       className="text-xs text-err hover:underline"
                     >
                       Excluir
+                    </button>
+                    {/* Try to open related pedido if title contains 'Pedido <id>' */}
+                    <button
+                      onClick={() => {
+                        if (l.pedido_id) {
+                          navigate({ to: "/erp/compras/itens", search: `?pedido=${l.pedido_id}` });
+                          return;
+                        }
+                        const m = (l.titulo || "").match(/Pedido\s+(\w+)/i);
+                        if (m) navigate({ to: "/erp/compras/itens", search: `?pedido=${m[1]}` });
+                      }}
+                      className="text-xs text-muted-foreground hover:underline"
+                    >
+                      Abrir pedido
                     </button>
                   </div>
                 </div>
@@ -236,12 +300,14 @@ function LancamentoForm({
   companyId,
   fornecedores,
   obras,
+  existing,
   onDone,
   onCancel,
 }: {
   companyId: string;
   fornecedores: Fornecedor[];
   obras: Obra[];
+  existing?: Lancamento;
   onDone: () => void;
   onCancel: () => void;
 }) {
@@ -251,24 +317,73 @@ function LancamentoForm({
   const [vencimento, setVencimento] = useState("");
   const [valor, setValor] = useState("");
   const [formaPagamento, setFormaPagamento] = useState("");
+  const [processoNumero, setProcessoNumero] = useState("");
+  const [notaNumero, setNotaNumero] = useState("");
+  const [pedidoId, setPedidoId] = useState<string | null>(null);
+  const [pedidosList, setPedidosList] = useState<Array<{ id: string; titulo?: string }>>([]);
   const [loading, setLoading] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (existing) {
+      setTitulo(existing.titulo || "");
+      setFornecedorId(existing.fornecedor_id || "");
+      setObraId(existing.obra_id || "");
+      setVencimento(existing.vencimento || "");
+      setValor(String(existing.valor || ""));
+      setFormaPagamento(existing.forma_pagamento || "");
+      setProcessoNumero(existing.processo_numero || "");
+      setNotaNumero(existing.nota_numero || "");
+      setPedidoId(existing.pedido_id || null);
+    }
+  }, [existing]);
+
+  useEffect(() => {
+    // load pedidos for optional linking
+    if (!companyId) return;
+    supabase
+      .from("pedidos")
+      .select("id, valor, fornecedor:fornecedores(nome)")
+      .eq("company_id", companyId)
+      .order("created_at", { ascending: false })
+      .then(({ data }) => {
+        setPedidosList((data || []).map((p: any) => ({ id: p.id, titulo: `${p.fornecedor?.nome || "—"} — ${p.id}` })));
+      });
+  }, [companyId]);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setLoading(true);
     setErro(null);
     try {
-      const { error } = await supabase.from("lancamentos").insert({
-        company_id: companyId,
-        titulo,
-        fornecedor_id: fornecedorId || null,
-        obra_id: obraId || null,
-        vencimento: vencimento || null,
-        valor: Number(valor) || 0,
-        forma_pagamento: formaPagamento,
-      });
-      if (error) throw error;
+      if (existing) {
+        const { error } = await supabase.from("lancamentos").update({
+          titulo,
+          fornecedor_id: fornecedorId || null,
+          obra_id: obraId || null,
+          vencimento: vencimento || null,
+          valor: Number(valor) || 0,
+          forma_pagamento: formaPagamento,
+          processo_numero: processoNumero || null,
+          nota_numero: notaNumero || null,
+          pedido_id: pedidoId || null,
+        }).eq("id", existing.id);
+        if (error) throw error;
+      } else {
+        const { error } = await supabase.from("lancamentos").insert({
+          company_id: companyId,
+          titulo,
+          fornecedor_id: fornecedorId || null,
+          obra_id: obraId || null,
+          vencimento: vencimento || null,
+          valor: Number(valor) || 0,
+          forma_pagamento: formaPagamento,
+          processo_numero: processoNumero || null,
+          nota_numero: notaNumero || null,
+          pedido_id: pedidoId || null,
+        });
+        if (error) throw error;
+      }
       onDone();
     } catch (err) {
       setErro(err instanceof Error ? err.message : "Erro ao salvar");
@@ -334,6 +449,33 @@ function LancamentoForm({
             value={formaPagamento}
             onChange={(e) => setFormaPagamento(e.target.value)}
           />
+        </div>
+
+        <div>
+          <label className="block text-xs font-semibold text-muted-foreground mb-1">Processo</label>
+          <input className="field" value={processoNumero} onChange={(e) => setProcessoNumero(e.target.value)} />
+        </div>
+        <div>
+          <label className="block text-xs font-semibold text-muted-foreground mb-1">Número da nota</label>
+          <input className="field" value={notaNumero} onChange={(e) => setNotaNumero(e.target.value)} />
+        </div>
+        <div className="md:col-span-2">
+          <label className="block text-xs font-semibold text-muted-foreground mb-1">Pedido vinculado (opcional)</label>
+          <select className="field" value={pedidoId || ""} onChange={(e) => setPedidoId(e.target.value || null)}>
+            <option value="">Nenhum</option>
+            {pedidosList.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.titulo}
+              </option>
+            ))}
+          </select>
+          {pedidoId && (
+            <p className="mt-1 text-xs">
+              <a className="text-cta hover:underline" href={`/erp/compras/itens?pedido=${pedidoId}`}>
+                Abrir pedido {pedidoId}
+              </a>
+            </p>
+          )}
         </div>
 
         {erro && <p className="md:col-span-2 text-sm text-err">{erro}</p>}

@@ -32,13 +32,98 @@ function OrcamentosPage() {
     const [{ data: orcData }, { data: clientesData }, { data: obrasData }] = await Promise.all([
       supabase
         .from("orcamentos")
-        .select("*, cliente:clientes(nome), obra:obras(nome)")
+        .select(
+          "*, cliente:clientes(nome), obra:obras(nome), servicos:orcamento_servicos(id, itens:orcamento_itens(id, descricao, quantidade, valor_unitario, valor_verba, peso))"
+        )
         .eq("company_id", companyId)
         .order("created_at", { ascending: false }),
       supabase.from("clientes").select("*").eq("company_id", companyId).order("nome"),
       supabase.from("obras").select("*").eq("company_id", companyId).order("nome"),
     ]);
-    setOrcamentos(orcData || []);
+    const orcs = (orcData || []) as any[];
+
+    // build maps of item ids and service ids across all orcamentos
+    const allItemIds: string[] = [];
+    const servicoIdsByOrc = new Map<string, string[]>();
+    const itemIdsByOrc = new Map<string, string[]>();
+    const itemValorMap = new Map<string, number>();
+
+    for (const o of orcs) {
+      const servs = (o.servicos || []) as any[];
+      const orcItemIds: string[] = [];
+      const orcServIds: string[] = [];
+      for (const sv of servs) {
+        orcServIds.push(sv.id);
+        for (const it of sv.itens || []) {
+          orcItemIds.push(it.id);
+          allItemIds.push(it.id);
+          itemValorMap.set(it.id, Number((it.quantidade || 0) * (it.valor_unitario || it.valor_verba || 0)));
+        }
+      }
+      servicoIdsByOrc.set(o.id, orcServIds);
+      itemIdsByOrc.set(o.id, orcItemIds);
+    }
+
+    // pedidos: compromissos por item
+    let pedidoItens: any[] = [];
+    if (allItemIds.length > 0) {
+      const { data } = await supabase
+        .from("pedido_itens")
+        .select("quantidade, valor_unitario, orcamento_item_id, pedido:pedidos(status)")
+        .in("orcamento_item_id", allItemIds);
+      pedidoItens = data || [];
+    }
+
+    // medicoes: valores por item/servico (dedupe por id para evitar contagem dupla)
+    const medicoesMap = new Map<string, any>();
+    if (allItemIds.length > 0) {
+      const { data } = await supabase
+        .from("medicoes")
+        .select("id, valor, orcamento_item_id, servico_id")
+        .in("orcamento_item_id", allItemIds);
+      for (const m of data || []) medicoesMap.set(m.id, m);
+    }
+    const allServIds = Array.from(new Set(Array.from(servicoIdsByOrc.values()).flat()));
+    if (allServIds.length > 0) {
+      const { data } = await supabase
+        .from("medicoes")
+        .select("id, valor, orcamento_item_id, servico_id")
+        .in("servico_id", allServIds);
+      for (const m of data || []) if (!medicoesMap.has(m.id)) medicoesMap.set(m.id, m);
+    }
+    const medicoes = Array.from(medicoesMap.values());
+
+    // compute per-orc totals and comprometido
+    const enriched = orcs.map((o: any) => {
+      const itemIds = itemIdsByOrc.get(o.id) || [];
+      const servIds = servicoIdsByOrc.get(o.id) || [];
+
+      const total = (o.servicos || []).reduce((s: number, sv: any) => {
+        return s + (sv.itens || []).reduce((si: number, it: any) => si + (Number(it.quantidade || 0) * Number(it.valor_unitario || it.valor_verba || 0)), 0);
+      }, 0);
+
+      const compPedidos = (pedidoItens || [])
+        .filter((pi: any) => pi.pedido?.status !== "CANCELADO" && itemIds.includes(pi.orcamento_item_id))
+        .reduce((s: number, pi: any) => {
+          const quantidade = Number(pi.quantidade) || 0;
+          const valorUnitario = Number(pi.valor_unitario) || 0;
+          const fallback = itemValorMap.get(pi.orcamento_item_id) || 0;
+          return s + quantidade * (valorUnitario > 0 ? valorUnitario : fallback);
+        }, 0);
+
+      const compMedicoes = (medicoes || []).reduce((s: number, m: any) => {
+        if (m.orcamento_item_id && itemIds.includes(m.orcamento_item_id)) return s + Number(m.valor || 0);
+        if (m.servico_id && servIds.includes(m.servico_id)) return s + Number(m.valor || 0);
+        return s;
+      }, 0);
+
+      const comprometido = compPedidos + compMedicoes;
+      const percentual = total > 0 ? Math.round((comprometido / total) * 100) : 0;
+
+      return { ...o, valor: total, percentual_consumo: percentual, __comprometido: comprometido };
+    });
+
+    setOrcamentos(enriched || []);
     setClientes(clientesData || []);
     setObras(obrasData || []);
     setLoading(false);

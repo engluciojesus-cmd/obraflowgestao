@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { supabase } from "@/integrations/supabase/client";
+import { useTenant } from "@/app/TenantProvider";
 import type { AuthUser, CompanyMember, Company } from "@/types";
 
 /**
@@ -181,17 +182,17 @@ export function useCompanyRole(companyId: string | undefined) {
 }
 
 /**
- * Hook para obter a "empresa ativa" do usuário — a primeira empresa
- * disponível (admin_global também usa a primeira empresa cadastrada).
- * Usado pelos módulos ERP (clientes, obras, orçamentos, etc).
+ * Hook para obter a "empresa ativa" do usuário (companyId selecionado no
+ * TenantProvider, persistido em localStorage). Alias fino de useTenant()
+ * mantido para não quebrar os módulos ERP existentes.
  */
 export function useActiveCompany() {
-  const { companies, loading, error } = useUserCompanies();
+  const { company, companyId, isLoading } = useTenant();
   return {
-    company: companies[0] ?? null,
-    companyId: companies[0]?.id ?? null,
-    loading,
-    error,
+    company,
+    companyId,
+    loading: isLoading,
+    error: null as string | null,
   };
 }
 
@@ -200,15 +201,9 @@ export function useActiveCompany() {
  * Retorna null quando não há restrição (vê todos).
  */
 export function useModulosPermitidos() {
-  const { user } = useAuthUser();
-  const { companyId } = useActiveCompany();
-  const { role, loading } = useCompanyRole(companyId || undefined);
-
-  if (user?.global_role === "admin_global") return { modulos: null, loading: false };
-  if (loading) return { modulos: null, loading: true };
-  if (!role?.modulos || role.modulos.length === 0) return { modulos: null, loading: false };
-
-  return { modulos: role.modulos, loading: false };
+  const { modulos, isAdminGlobal, isLoading } = useTenant();
+  if (isAdminGlobal) return { modulos: null, loading: false };
+  return { modulos, loading: isLoading };
 }
 
 /**

@@ -98,6 +98,18 @@ function ObraPainel() {
         }
       }
     }
+    // Inclui medições no comprometido (medições representam valor comprometido)
+    for (const m of medicoes || []) {
+      const valor = Number(m.valor || 0);
+      if (m.orcamento_item_id) {
+        gastoPorItem.set(
+          m.orcamento_item_id,
+          (gastoPorItem.get(m.orcamento_item_id) || 0) + valor
+        );
+      } else {
+        avulso += valor;
+      }
+    }
     setSemVinculo(avulso);
 
     // Medições são incrementais: o acumulado é a soma dos lançamentos
@@ -160,7 +172,16 @@ function ObraPainel() {
   const totalOrcado = servicos.reduce((s, sv) => s + sv.orcado, 0);
   const totalComprometido = servicos.reduce((s, sv) => s + sv.comprometido, 0) + semVinculo;
   const somaPesos = servicos.reduce((s, sv) => s + sv.peso, 0);
-  const avancoFisico = servicos.reduce((s, sv) => s + (sv.peso * avancoServico(sv)) / 100, 0);
+  // Se não houver pesos informados, distribui proporcionalmente pelo orçado
+  function pesoEfetivo(sv: ServicoLinha) {
+    if (somaPesos > 0) return sv.peso;
+    return totalOrcado > 0 ? (sv.orcado / totalOrcado) * 100 : 0;
+  }
+
+  const avancoFisico = servicos.reduce(
+    (s, sv) => s + (pesoEfetivo(sv) * avancoServico(sv)) / 100,
+    0
+  );
   const totalMedido = servicos.reduce((s, sv) => s + (sv.orcado * avancoServico(sv)) / 100, 0);
 
   // Mantém o avanço da obra sincronizado com o que foi medido
@@ -226,6 +247,9 @@ function ObraPainel() {
           >
             {money(totalOrcado - totalComprometido)}
           </p>
+          {totalOrcado - totalComprometido < 0 && (
+            <p className="mt-2 text-sm text-err font-semibold">Saldo devedor — atenção!</p>
+          )}
         </div>
         <div className="rounded-lg border border-line bg-card p-5">
           <p className="text-xs font-semibold text-muted-foreground uppercase">Medido</p>
@@ -299,7 +323,9 @@ function ObraPainel() {
                         <td className="py-3 text-right">{sv.peso}%</td>
                         <td className="py-3 text-right">{money(sv.orcado)}</td>
                         <td className={`py-3 text-right ${estourou ? "text-err font-semibold" : ""}`}>
-                          {money(sv.comprometido)}
+                          <Link to={("/erp/compras/itens?obra=" + obra.id + "&orcItemId=" + sv.id) as unknown as any} className="hover:underline">
+                            {money(sv.comprometido)}
+                          </Link>
                         </td>
                         <td className="py-3 text-right font-semibold">{exec.toFixed(1)}%</td>
                         <td className="py-3 text-right">{money((sv.orcado * exec) / 100)}</td>
@@ -327,7 +353,9 @@ function ObraPainel() {
                               {money(it.valor)}
                             </td>
                             <td className="py-2 text-right text-muted-foreground">
-                              {money(it.comprometido)}
+                              <Link to={("/erp/compras/itens?obra=" + obra.id + "&orcItemId=" + it.id) as unknown as any} className="text-muted-foreground hover:underline">
+                                {money(it.comprometido)}
+                              </Link>
                             </td>
                             <td className="py-2 text-right">{it.medido.toFixed(1)}%</td>
                             <td className="py-2 text-right text-muted-foreground">

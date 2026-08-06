@@ -228,6 +228,9 @@ export interface Lancamento {
   titulo: string;
   fornecedor_id?: string | null;
   obra_id?: string | null;
+  pedido_id?: string | null;
+  processo_numero?: string | null;
+  nota_numero?: string | null;
   vencimento?: string | null;
   valor: number;
   forma_pagamento?: string | null;
@@ -245,6 +248,7 @@ export interface Medicao {
   obra_id?: string | null;
   servico_id?: string | null;
   orcamento_item_id?: string | null;
+  contrato_id?: string | null;
   numero?: number | null;
   data?: string | null;
   percentual_medido: number;

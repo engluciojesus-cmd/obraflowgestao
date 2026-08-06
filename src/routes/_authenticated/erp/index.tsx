@@ -311,14 +311,14 @@ function LeitorNota({ onClose }: { onClose: () => void }) {
       "obraflow:nota-lida",
       JSON.stringify({
         fornecedor: nota.fornecedor,
-        itens: nota.itens.filter((it) => it.descricao),
+        itens: nota.itens.filter((it: any) => it.descricao),
       })
     );
     navigate({ to: "/erp/compras/itens" });
   }
 
   const total = (nota?.itens || []).reduce(
-    (s, it) => s + (Number(it.quantidade) || 0) * (Number(it.valor_unitario) || 0),
+    (s: number, it: any) => s + (Number(it.quantidade) || 0) * (Number(it.valor_unitario) || 0),
     0
   );
 

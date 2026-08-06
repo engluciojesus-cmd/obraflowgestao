@@ -26,6 +26,9 @@ function FornecedoresPage() {
   const [showForm, setShowForm] = useState(false);
   const [editing, setEditing] = useState<Fornecedor | null>(null);
   const [selected, setSelected] = useState<Fornecedor | null>(null);
+  const [search, setSearch] = useState("");
+  const [statusFilter, setStatusFilter] = useState<"TODOS" | "ATIVO" | "INATIVO">("TODOS");
+  const [categoriaFilter, setCategoriaFilter] = useState("");
 
   useEffect(() => {
     if (companyId) load();
@@ -76,6 +79,14 @@ function FornecedoresPage() {
 
   if (companyLoading) return null;
 
+  const filteredFornecedores = fornecedores.filter((f) => {
+    return (
+      (statusFilter === "TODOS" || f.status === statusFilter) &&
+      (f.nome.toLowerCase().includes(search.toLowerCase()) || f.cnpj?.includes(search) || f.categoria?.toLowerCase().includes(search.toLowerCase())) &&
+      (!categoriaFilter || f.categoria?.toLowerCase().includes(categoriaFilter.toLowerCase()))
+    );
+  });
+
   return (
     <ErpLayout
       title="Fornecedores"
@@ -110,13 +121,62 @@ function FornecedoresPage() {
         />
       )}
 
+      <div className="rounded-lg border border-line bg-card p-4 mb-6 flex items-center justify-between flex-wrap gap-3">
+        <div className="flex gap-2 flex-wrap">
+          <button
+            onClick={() => setStatusFilter("TODOS")}
+            className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition ${
+              statusFilter === "TODOS"
+                ? "bg-cta text-cta-foreground"
+                : "bg-side text-foreground hover:bg-side/80"
+            }`}
+          >
+            Todos
+          </button>
+          <button
+            onClick={() => setStatusFilter("ATIVO")}
+            className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition ${
+              statusFilter === "ATIVO"
+                ? "bg-cta text-cta-foreground"
+                : "bg-side text-foreground hover:bg-side/80"
+            }`}
+          >
+            Ativos
+          </button>
+          <button
+            onClick={() => setStatusFilter("INATIVO")}
+            className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition ${
+              statusFilter === "INATIVO"
+                ? "bg-cta text-cta-foreground"
+                : "bg-side text-foreground hover:bg-side/80"
+            }`}
+          >
+            Inativos
+          </button>
+        </div>
+        <div className="flex gap-2 flex-wrap">
+          <input
+            className="field w-56"
+            placeholder="Buscar fornecedor..."
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+          />
+          <input
+            className="field w-56"
+            placeholder="Categoria..."
+            value={categoriaFilter}
+            onChange={(e) => setCategoriaFilter(e.target.value)}
+          />
+        </div>
+      </div>
+
       <div className="grid gap-6 md:grid-cols-3">
         <div className="md:col-span-2 rounded-lg border border-line bg-card p-6">
           <h3 className="font-bold mb-4">Cadastro</h3>
           {loading ? (
             <p className="text-muted-foreground">Carregando...</p>
-          ) : fornecedores.length === 0 ? (
-            <p className="text-sm text-muted-foreground">Nenhum fornecedor cadastrado.</p>
+          ) : filteredFornecedores.length === 0 ? (
+            <p className="text-sm text-muted-foreground">Nenhum fornecedor encontrado.</p>
           ) : (
             <table className="w-full text-sm">
               <thead>
@@ -130,7 +190,7 @@ function FornecedoresPage() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-line">
-                {fornecedores.map((f) => (
+                {filteredFornecedores.map((f) => (
                   <tr
                     key={f.id}
                     onClick={() => setSelected(f)}

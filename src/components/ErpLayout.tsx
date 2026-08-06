@@ -2,6 +2,7 @@ import { Link, useNavigate, useRouterState } from "@tanstack/react-router";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuthUser, useActiveCompany, useModulosPermitidos } from "@/hooks/useAuth";
 import { COMPRAS_SUBMODULOS, temAcessoComprasSub } from "@/types";
+import { SeletorEmpresa } from "@/components/SeletorEmpresa";
 import type { ReactNode } from "react";
 import { useState } from "react";
 
@@ -171,6 +172,7 @@ export function ErpLayout({
             <h2 className="text-2xl font-bold">{title}</h2>
           </div>
           <div className="flex items-center gap-4">
+            <SeletorEmpresa />
             {actions}
             {company?.logo_url && (
               <img

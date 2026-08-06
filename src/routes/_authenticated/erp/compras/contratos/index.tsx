@@ -344,7 +344,7 @@ function ContratoForm({
   }, [obraId]);
 
   const total = itens.reduce(
-    (s, it) => s + Number(it.quantidade || 0) * Number(it.valor_unitario || 0),
+    (s: number, it: any) => s + Number(it.quantidade || 0) * Number(it.valor_unitario || 0),
     0
   );
 
@@ -385,10 +385,10 @@ function ContratoForm({
         .single();
       if (error) throw error;
 
-      const validos = itens.filter((it) => it.descricao.trim());
+      const validos = itens.filter((it: any) => it.descricao.trim());
       if (validos.length > 0) {
         const { error: itensError } = await supabase.from("contrato_itens").insert(
-          validos.map((it, i) => ({
+          validos.map((it: any, i: number) => ({
             contrato_id: contrato.id,
             orcamento_item_id: it.orcamento_item_id || null,
             descricao: it.descricao,
