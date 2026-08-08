@@ -4,6 +4,13 @@ import { supabase } from "@/integrations/supabase/client";
 import { useActiveCompany } from "@/hooks/useAuth";
 import { ErpLayout, StatusBadge, money } from "@/components/ErpLayout";
 import { ComprasSubNav } from "@/components/ComprasSubNav";
+import {
+  PainelFiltros,
+  CampoFiltro,
+  FaixaDeData,
+  SEM_BUSCA,
+  SEM_RESULTADO,
+} from "@/components/PainelFiltros";
 import type { Contrato, ContratoStatus, Fornecedor, Obra } from "@/types";
 
 export const Route = createFileRoute("/_authenticated/erp/compras/contratos/")({
@@ -17,39 +24,94 @@ const PROXIMO: Record<string, { label: string; status: ContratoStatus }[]> = {
   ASSINADO: [{ label: "Concluir", status: "CONCLUÍDO" }],
 };
 
+const STATUS_CONTRATO: ContratoStatus[] = [
+  "RASCUNHO",
+  "AGUARDANDO ASSINATURA",
+  "ASSINADO",
+  "CONCLUÍDO",
+  "CANCELADO",
+];
+
+interface FiltroContratos {
+  situacao: string;
+  numero: string;
+  identificador: string;
+  obraId: string;
+  fornecedorId: string;
+  dataDe: string;
+  dataAte: string;
+}
+
+function filtroPadrao(): FiltroContratos {
+  return {
+    situacao: "",
+    numero: "",
+    identificador: "",
+    obraId: "",
+    fornecedorId: "",
+    dataDe: "",
+    dataAte: "",
+  };
+}
+
 function ContratosPage() {
   const { companyId, company, loading: companyLoading } = useActiveCompany();
   const [contratos, setContratos] = useState<Contrato[]>([]);
   const [fornecedores, setFornecedores] = useState<Fornecedor[]>([]);
   const [obras, setObras] = useState<Obra[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
   const [showForm, setShowForm] = useState(false);
+  // Abrir a tela não lista contrato nenhum — só depois de "Buscar" (docs/05 §4).
+  const [jaBuscou, setJaBuscou] = useState(false);
+  const [rascunho, setRascunho] = useState<FiltroContratos>(filtroPadrao);
 
+  // Fornecedores e obras continuam carregando na abertura: alimentam tanto os
+  // selects do filtro quanto o formulário de novo contrato.
   useEffect(() => {
-    if (companyId) load();
+    if (!companyId) return;
+    supabase
+      .from("fornecedores")
+      .select("*")
+      .eq("company_id", companyId)
+      .eq("status", "ATIVO")
+      .order("nome")
+      .then(({ data }) => setFornecedores(data || []));
+    supabase
+      .from("obras")
+      .select("*")
+      .eq("company_id", companyId)
+      .order("nome")
+      .then(({ data }) => setObras(data || []));
   }, [companyId]);
 
   async function load() {
     if (!companyId) return;
     setLoading(true);
-    const [{ data: contratosData }, { data: fornsData }, { data: obrasData }] = await Promise.all([
-      supabase
-        .from("contratos")
-        .select("*, obra:obras(nome), fornecedor:fornecedores(nome, cnpj), itens:contrato_itens(*)")
-        .eq("company_id", companyId)
-        .order("numero", { ascending: false }),
-      supabase
-        .from("fornecedores")
-        .select("*")
-        .eq("company_id", companyId)
-        .eq("status", "ATIVO")
-        .order("nome"),
-      supabase.from("obras").select("*").eq("company_id", companyId).order("nome"),
-    ]);
-    setContratos((contratosData as any) || []);
-    setFornecedores(fornsData || []);
-    setObras(obrasData || []);
+    let query = supabase
+      .from("contratos")
+      .select("*, obra:obras(nome), fornecedor:fornecedores(nome, cnpj), itens:contrato_itens(*)")
+      .eq("company_id", companyId)
+      .order("numero", { ascending: false });
+
+    if (rascunho.situacao) query = query.eq("status", rascunho.situacao);
+    if (rascunho.numero.trim()) query = query.eq("numero", Number(rascunho.numero.trim()) || -1);
+    if (rascunho.identificador.trim())
+      query = query.ilike("identificador", `%${rascunho.identificador.trim()}%`);
+    if (rascunho.obraId) query = query.eq("obra_id", rascunho.obraId);
+    if (rascunho.fornecedorId) query = query.eq("fornecedor_id", rascunho.fornecedorId);
+    if (rascunho.dataDe) query = query.gte("data_inicio", rascunho.dataDe);
+    if (rascunho.dataAte) query = query.lte("data_inicio", rascunho.dataAte);
+
+    const { data } = await query;
+    setContratos((data as any) || []);
+    setJaBuscou(true);
     setLoading(false);
+  }
+
+  function limpar() {
+    setRascunho(filtroPadrao());
+    setContratos([]);
+    setJaBuscou(false);
   }
 
   async function mudarStatus(c: Contrato, status: ContratoStatus) {
@@ -219,14 +281,94 @@ function ContratosPage() {
         />
       )}
 
-      <div className="rounded-lg border border-line bg-card p-6">
-        <h3 className="font-bold mb-4">
-          Contratos ({contratos.length}) · {money(total)}
-        </h3>
+      <div className="flex gap-6">
+        <PainelFiltros onBuscar={load} onLimpar={limpar} buscando={loading}>
+          <CampoFiltro rotulo="Situação">
+            <select
+              className="field w-full"
+              value={rascunho.situacao}
+              onChange={(e) => setRascunho({ ...rascunho, situacao: e.target.value })}
+            >
+              <option value="">Todas</option>
+              {STATUS_CONTRATO.map((s) => (
+                <option key={s} value={s}>
+                  {s}
+                </option>
+              ))}
+            </select>
+          </CampoFiltro>
+
+          <CampoFiltro rotulo="Número">
+            <input
+              className="field w-full"
+              inputMode="numeric"
+              placeholder="1"
+              value={rascunho.numero}
+              onChange={(e) => setRascunho({ ...rascunho, numero: e.target.value })}
+            />
+          </CampoFiltro>
+
+          <CampoFiltro rotulo="Identificador">
+            <input
+              className="field w-full"
+              placeholder="Contém..."
+              value={rascunho.identificador}
+              onChange={(e) => setRascunho({ ...rascunho, identificador: e.target.value })}
+            />
+          </CampoFiltro>
+
+          <CampoFiltro rotulo="Obra">
+            <select
+              className="field w-full"
+              value={rascunho.obraId}
+              onChange={(e) => setRascunho({ ...rascunho, obraId: e.target.value })}
+            >
+              <option value="">Todas</option>
+              {obras.map((o) => (
+                <option key={o.id} value={o.id}>
+                  {o.nome}
+                </option>
+              ))}
+            </select>
+          </CampoFiltro>
+
+          <CampoFiltro rotulo="Fornecedor">
+            <select
+              className="field w-full"
+              value={rascunho.fornecedorId}
+              onChange={(e) => setRascunho({ ...rascunho, fornecedorId: e.target.value })}
+            >
+              <option value="">Todos</option>
+              {fornecedores.map((f) => (
+                <option key={f.id} value={f.id}>
+                  {f.nome}
+                </option>
+              ))}
+            </select>
+          </CampoFiltro>
+
+          <FaixaDeData
+            rotulo="Início da vigência"
+            de={rascunho.dataDe}
+            ate={rascunho.dataAte}
+            onDe={(v) => setRascunho({ ...rascunho, dataDe: v })}
+            onAte={(v) => setRascunho({ ...rascunho, dataAte: v })}
+          />
+        </PainelFiltros>
+
+        <div className="flex-1 min-w-0">
+      <div className="rounded-lg border border-line bg-card p-6 overflow-x-auto">
+        {contratos.length > 0 && (
+          <h3 className="font-bold mb-4">
+            Contratos ({contratos.length}) · {money(total)}
+          </h3>
+        )}
         {loading ? (
           <p className="text-muted-foreground">Carregando...</p>
         ) : contratos.length === 0 ? (
-          <p className="text-sm text-muted-foreground">Nenhum contrato cadastrado.</p>
+          <p className="text-sm text-muted-foreground">
+            {jaBuscou ? SEM_RESULTADO : `Nenhum contrato. ${SEM_BUSCA}`}
+          </p>
         ) : (
           <table className="w-full text-sm">
             <thead>
@@ -290,6 +432,8 @@ function ContratosPage() {
             </tbody>
           </table>
         )}
+      </div>
+        </div>
       </div>
     </ErpLayout>
   );

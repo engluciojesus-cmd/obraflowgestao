@@ -282,6 +282,11 @@ function FornecedorForm({
   onCancel: () => void;
 }) {
   const [nome, setNome] = useState(fornecedor?.nome || "");
+  const [razaoSocial, setRazaoSocial] = useState(fornecedor?.razao_social || "");
+  const [nomeFantasia, setNomeFantasia] = useState(fornecedor?.nome_fantasia || "");
+  const [vendedorNome, setVendedorNome] = useState(fornecedor?.vendedor_nome || "");
+  const [vendedorTelefone, setVendedorTelefone] = useState(fornecedor?.vendedor_telefone || "");
+  const [vendedorEmail, setVendedorEmail] = useState(fornecedor?.vendedor_email || "");
   const [cnpj, setCnpj] = useState(fornecedor?.cnpj || "");
   const [categoria, setCategoria] = useState(fornecedor?.categoria || "");
   const [avaliacao, setAvaliacao] = useState(fornecedor?.avaliacao ?? 5);
@@ -293,18 +298,22 @@ function FornecedorForm({
     setLoading(true);
     setErro(null);
     try {
+      // Razão social em branco cai para o nome: é por ela que a cotação
+      // identifica o fornecedor, e um cadastro sem ela sairia em branco na OC.
+      const campos = {
+        nome,
+        razao_social: razaoSocial.trim() || nome,
+        nome_fantasia: nomeFantasia.trim() || null,
+        vendedor_nome: vendedorNome.trim() || null,
+        vendedor_telefone: vendedorTelefone.trim() || null,
+        vendedor_email: vendedorEmail.trim() || null,
+        cnpj,
+        categoria,
+        avaliacao,
+      };
       const { error } = fornecedor
-        ? await supabase
-            .from("fornecedores")
-            .update({ nome, cnpj, categoria, avaliacao })
-            .eq("id", fornecedor.id)
-        : await supabase.from("fornecedores").insert({
-            company_id: companyId,
-            nome,
-            cnpj,
-            categoria,
-            avaliacao,
-          });
+        ? await supabase.from("fornecedores").update(campos).eq("id", fornecedor.id)
+        : await supabase.from("fornecedores").insert({ company_id: companyId, ...campos });
       if (error) throw error;
       onDone();
     } catch (err) {
@@ -327,6 +336,37 @@ function FornecedorForm({
         <div>
           <label className="block text-xs font-semibold text-muted-foreground mb-1">CNPJ</label>
           <input className="field" value={cnpj} onChange={(e) => setCnpj(e.target.value)} />
+        </div>
+        {/* Estes três campos são o que a busca do mapa de cotação varre. */}
+        <div>
+          <label className="block text-xs font-semibold text-muted-foreground mb-1">Razão social</label>
+          <input
+            className="field"
+            placeholder="Igual ao nome, se em branco"
+            value={razaoSocial}
+            onChange={(e) => setRazaoSocial(e.target.value)}
+          />
+        </div>
+        <div>
+          <label className="block text-xs font-semibold text-muted-foreground mb-1">Nome fantasia</label>
+          <input className="field" value={nomeFantasia} onChange={(e) => setNomeFantasia(e.target.value)} />
+        </div>
+        <div>
+          <label className="block text-xs font-semibold text-muted-foreground mb-1">Vendedor</label>
+          <input className="field" value={vendedorNome} onChange={(e) => setVendedorNome(e.target.value)} />
+        </div>
+        <div>
+          <label className="block text-xs font-semibold text-muted-foreground mb-1">Telefone do vendedor</label>
+          <input className="field" value={vendedorTelefone} onChange={(e) => setVendedorTelefone(e.target.value)} />
+        </div>
+        <div>
+          <label className="block text-xs font-semibold text-muted-foreground mb-1">E-mail do vendedor</label>
+          <input
+            type="email"
+            className="field"
+            value={vendedorEmail}
+            onChange={(e) => setVendedorEmail(e.target.value)}
+          />
         </div>
         <div>
           <label className="block text-xs font-semibold text-muted-foreground mb-1">Categoria</label>

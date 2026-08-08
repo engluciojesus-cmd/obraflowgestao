@@ -4,6 +4,23 @@ import { supabase } from "@/integrations/supabase/client";
 import { useActiveCompany } from "@/hooks/useAuth";
 import { ErpLayout, StatusBadge, money } from "@/components/ErpLayout";
 import { ComprasSubNav } from "@/components/ComprasSubNav";
+import {
+  PainelFiltros,
+  CampoFiltro,
+  FaixaDeData,
+  SEM_BUSCA,
+  SEM_RESULTADO,
+} from "@/components/PainelFiltros";
+// O vocabulário de status do fluxo de suprimentos (docs/05 §3) é mais amplo
+// que o legado em @/types — daí o alias, para não colidir com OrdemCompraStatus.
+import {
+  ORDEM_COMPRA_STATUS,
+  type OrdemCompraStatus as OrdemCompraStatusFluxo,
+} from "@/modules/suprimentos/domain/types";
+import {
+  montarDocumentoOC,
+  type DadosDocumentoOC,
+} from "@/modules/compras/ui/documentoOC";
 import type { OrdemCompra, OrdemCompraStatus } from "@/types";
 
 export const Route = createFileRoute("/_authenticated/erp/compras/ordens/")({
@@ -17,26 +34,73 @@ const PROXIMO: Record<string, { label: string; status: OrdemCompraStatus }[]> = 
   CONFIRMADA: [{ label: "Recebida", status: "RECEBIDA" }],
 };
 
+interface FiltroOrdens {
+  situacao: string;
+  numero: string;
+  obraId: string;
+  fornecedorId: string;
+  dataDe: string;
+  dataAte: string;
+}
+
+function filtroPadrao(): FiltroOrdens {
+  return { situacao: "", numero: "", obraId: "", fornecedorId: "", dataDe: "", dataAte: "" };
+}
+
 function OrdensPage() {
   const { companyId, company, loading: companyLoading } = useActiveCompany();
   const [ordens, setOrdens] = useState<OrdemCompra[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [statusFilter, setStatusFilter] = useState("");
+  const [loading, setLoading] = useState(false);
+  // Abrir a tela não consulta ordem nenhuma — só depois de "Buscar" (docs/05 §4).
+  const [jaBuscou, setJaBuscou] = useState(false);
+  const [rascunho, setRascunho] = useState<FiltroOrdens>(filtroPadrao);
+  const [obras, setObras] = useState<{ id: string; nome: string }[]>([]);
+  const [fornecedores, setFornecedores] = useState<{ id: string; nome: string }[]>([]);
+  const [linkCopiado, setLinkCopiado] = useState<string | null>(null);
 
+  // Só o que alimenta os selects do filtro carrega junto com a tela.
   useEffect(() => {
-    if (companyId) load();
+    if (!companyId) return;
+    supabase
+      .from("obras")
+      .select("id, nome")
+      .eq("company_id", companyId)
+      .order("nome")
+      .then(({ data }) => setObras(data || []));
+    supabase
+      .from("fornecedores")
+      .select("id, nome")
+      .eq("company_id", companyId)
+      .order("nome")
+      .then(({ data }) => setFornecedores(data || []));
   }, [companyId]);
 
   async function load() {
     if (!companyId) return;
     setLoading(true);
-    const { data } = await supabase
+    let query = supabase
       .from("ordens_compra")
       .select("*, obra:obras(nome), fornecedor:fornecedores(nome, cnpj), itens:ordem_compra_itens(*)")
       .eq("company_id", companyId)
       .order("numero", { ascending: false });
+
+    if (rascunho.situacao) query = query.eq("status", rascunho.situacao);
+    if (rascunho.numero.trim()) query = query.eq("numero", Number(rascunho.numero.trim()) || -1);
+    if (rascunho.obraId) query = query.eq("obra_id", rascunho.obraId);
+    if (rascunho.fornecedorId) query = query.eq("fornecedor_id", rascunho.fornecedorId);
+    if (rascunho.dataDe) query = query.gte("created_at", rascunho.dataDe);
+    if (rascunho.dataAte) query = query.lt("created_at", `${rascunho.dataAte}T23:59:59.999`);
+
+    const { data } = await query;
     setOrdens((data as any) || []);
+    setJaBuscou(true);
     setLoading(false);
+  }
+
+  function limpar() {
+    setRascunho(filtroPadrao());
+    setOrdens([]);
+    setJaBuscou(false);
   }
 
   async function mudarStatus(oc: OrdemCompra, status: OrdemCompraStatus) {
@@ -44,130 +108,56 @@ function OrdensPage() {
     load();
   }
 
-  function gerarPdf(oc: OrdemCompra) {
-    const itens = [...(oc.itens || [])].sort((a, b) => a.ordem - b.ordem);
-    const subtotal = itens.reduce(
-      (s, it) => s + Number(it.quantidade) * Number(it.valor_unitario),
-      0
-    );
-    const numero = String(oc.numero).padStart(6, "0");
-
-    const linhas = itens
-      .map(
-        (it, i) => `
-      <tr>
-        <td class="num">${i + 1}</td>
-        <td>${it.descricao}${it.marca ? ` <span class="marca">(${it.marca})</span>` : ""}</td>
-        <td class="num">${it.quantidade} ${it.unidade || ""}</td>
-        <td class="num">${money(Number(it.valor_unitario))}</td>
-        <td class="num">${money(Number(it.quantidade) * Number(it.valor_unitario))}</td>
-      </tr>`
-      )
-      .join("");
-
-    const html = `<!doctype html>
-<html lang="pt-BR"><head><meta charset="utf-8"><title>OC ${numero}</title>
-<style>
-  @page { size: A4; margin: 16mm 14mm; }
-  body { font-family: "Segoe UI", Arial, sans-serif; color: #1a1a1a; font-size: 11px; margin: 0; }
-  header { display: flex; align-items: flex-start; justify-content: space-between;
-           border-bottom: 2px solid #E8590C; padding-bottom: 10px; margin-bottom: 16px; }
-  header img { max-height: 48px; max-width: 170px; object-fit: contain; }
-  .empresa { font-size: 14px; font-weight: 700; }
-  h1 { font-size: 15px; margin: 0 0 14px; color: #E8590C; }
-  .bloco { border: 1px solid #ddd; margin-bottom: 10px; }
-  .bloco .tit { background: #f0f0f0; padding: 5px 8px; font-weight: 700;
-                font-size: 10px; text-transform: uppercase; }
-  .bloco .corpo { padding: 8px; display: grid; grid-template-columns: 1fr 1fr; gap: 4px 16px; }
-  .campo { display: flex; gap: 6px; }
-  .campo .rot { color: #666; min-width: 88px; }
-  table.itens { width: 100%; border-collapse: collapse; margin-top: 12px; }
-  table.itens th { background: #f0f0f0; text-align: left; padding: 6px 8px;
-                   border-bottom: 1px solid #999; font-size: 10px; text-transform: uppercase; }
-  table.itens td { padding: 6px 8px; border-bottom: 1px solid #eee; }
-  .num { text-align: right; white-space: nowrap; }
-  .marca { color: #777; font-size: 10px; }
-  tfoot td { font-weight: 700; }
-  .obs { margin-top: 14px; padding: 8px; background: #fafafa;
-         border-left: 3px solid #E8590C; font-size: 10px; }
-  footer { margin-top: 26px; padding-top: 8px; border-top: 1px solid #ddd;
-           display: flex; justify-content: space-between; font-size: 9px; color: #888; }
-</style></head><body>
-  <header>
-    <div>
-      ${company?.logo_url ? `<img src="${company.logo_url}" alt="">` : `<div class="empresa">${company?.name || ""}</div>`}
-    </div>
-    <div style="text-align:right">
-      <div style="font-weight:700">ORDEM DE COMPRA ${numero}</div>
-      <div style="color:#777">${new Date(oc.created_at).toLocaleDateString("pt-BR")}</div>
-    </div>
-  </header>
-
-  <h1>${oc.obra?.nome || "Sem obra vinculada"}</h1>
-
-  <div class="bloco">
-    <div class="tit">Dados da ordem de compra</div>
-    <div class="corpo">
-      <div class="campo"><span class="rot">Número</span><span>${numero}</span></div>
-      <div class="campo"><span class="rot">Data</span><span>${new Date(oc.created_at).toLocaleDateString("pt-BR")}</span></div>
-      <div class="campo"><span class="rot">Cond. pgto.</span><span>${oc.condicao_pagamento}</span></div>
-      <div class="campo"><span class="rot">Prev. entrega</span><span>${
-        oc.previsao_entrega
-          ? new Date(oc.previsao_entrega + "T00:00:00").toLocaleDateString("pt-BR")
-          : "—"
-      }</span></div>
-    </div>
-  </div>
-
-  <div class="bloco">
-    <div class="tit">Dados do fornecedor</div>
-    <div class="corpo">
-      <div class="campo"><span class="rot">Nome</span><span>${oc.fornecedor?.nome || "—"}</span></div>
-      <div class="campo"><span class="rot">CNPJ</span><span>${oc.fornecedor?.cnpj || "—"}</span></div>
-    </div>
-  </div>
-
-  <div class="bloco">
-    <div class="tit">Faturamento</div>
-    <div class="corpo">
-      <div class="campo"><span class="rot">Empresa</span><span>${company?.name || "—"}</span></div>
-      <div class="campo"><span class="rot">Obra</span><span>${oc.obra?.nome || "—"}</span></div>
-    </div>
-  </div>
-
-  <table class="itens">
-    <thead>
-      <tr>
-        <th style="width:26px">N.</th>
-        <th>Item</th>
-        <th class="num">Qtd.</th>
-        <th class="num">Unit. (R$)</th>
-        <th class="num">Total (R$)</th>
-      </tr>
-    </thead>
-    <tbody>${linhas}</tbody>
-    <tfoot>
-      <tr><td colspan="4" class="num">Subtotal</td><td class="num">${money(subtotal)}</td></tr>
-      <tr><td colspan="4" class="num">Frete</td><td class="num">${money(Number(oc.frete))}</td></tr>
-      <tr><td colspan="4" class="num">TOTAL</td><td class="num">${money(subtotal + Number(oc.frete))}</td></tr>
-    </tfoot>
-  </table>
-
-  ${oc.observacao ? `<div class="obs">${oc.observacao}</div>` : ""}
-
-  <footer>
-    <span>${company?.name || ""}</span>
-    <span>Gerado por ObraFlow Gestão</span>
-  </footer>
-  <script>window.onload = () => { window.print(); }</script>
-</body></html>`;
-
-    const win = window.open("", "_blank");
-    if (!win) {
-      alert("Permita pop-ups neste site para gerar o PDF.");
+  /**
+   * Gera (ou reaproveita) o link público e copia para a área de transferência.
+   *
+   * A rpc é idempotente: clicar de novo devolve o mesmo token, para não
+   * invalidar um link que o fornecedor já recebeu.
+   */
+  async function copiarLinkPublico(oc: OrdemCompra) {
+    const { data: token, error } = await supabase.rpc("gerar_link_oc", {
+      p_ordem_id: oc.id,
+    });
+    if (error || !token) {
+      alert(error?.message || "Não foi possível gerar o link.");
       return;
     }
-    win.document.write(html);
+
+    const url = `${window.location.origin}/oc/${token}`;
+    try {
+      await navigator.clipboard.writeText(url);
+      setLinkCopiado(oc.id);
+      window.setTimeout(() => setLinkCopiado(null), 2500);
+    } catch {
+      // clipboard exige contexto seguro (https ou localhost) — sem ele, mostrar
+      // a URL é melhor do que falhar em silêncio.
+      window.prompt("Copie o link da ordem de compra:", url);
+    }
+  }
+
+  /**
+   * O layout vive em modules/compras/ui/documentoOC — a página pública do
+   * fornecedor gera o mesmo documento, e duas cópias divergiriam com o tempo.
+   */
+  function gerarPdf(oc: OrdemCompra) {
+    const win = window.open('', '_blank');
+    if (!win) {
+      alert('Permita pop-ups neste site para gerar o PDF.');
+      return;
+    }
+    win.document.write(
+      montarDocumentoOC(
+        {
+          ...(oc as unknown as DadosDocumentoOC),
+          empresa: {
+            nome: company?.name,
+            cnpj: company?.cnpj,
+            logo_url: company?.logo_url,
+          },
+        },
+        true,
+      ),
+    );
     win.document.close();
   }
 
@@ -199,7 +189,7 @@ ${oc.observacao || ""}`;
     alert("Ordem copiada. Cole na conversa com o fornecedor.");
   }
 
-  const filtradas = statusFilter ? ordens.filter((o) => o.status === statusFilter) : ordens;
+  const filtradas = ordens;
   const total = filtradas.reduce((s, o) => s + Number(o.valor), 0);
 
   if (companyLoading) return null;
@@ -207,30 +197,86 @@ ${oc.observacao || ""}`;
   return (
     <ErpLayout title="Ordem de Compra" breadcrumb="Compras / Ordem de Compra">
       <ComprasSubNav />
-      <div className="rounded-lg border border-line bg-card p-4 mb-6 flex gap-3 items-center flex-wrap">
-        <select
-          className="field w-52"
-          value={statusFilter}
-          onChange={(e) => setStatusFilter(e.target.value)}
-        >
-          <option value="">Todos os status</option>
-          <option value="GERADA">Gerada</option>
-          <option value="ENVIADA">Enviada ao fornecedor</option>
-          <option value="CONFIRMADA">Confirmada</option>
-          <option value="RECEBIDA">Recebida</option>
-          <option value="CANCELADA">Cancelada</option>
-        </select>
-        <span className="text-sm text-muted-foreground">
-          {filtradas.length} {filtradas.length === 1 ? "ordem" : "ordens"} · {money(total)}
-        </span>
-      </div>
 
-      <div className="rounded-lg border border-line bg-card p-6">
+      <div className="flex gap-6">
+        <PainelFiltros onBuscar={load} onLimpar={limpar} buscando={loading}>
+          <CampoFiltro rotulo="Situação">
+            <select
+              className="field w-full"
+              value={rascunho.situacao}
+              onChange={(e) => setRascunho({ ...rascunho, situacao: e.target.value })}
+            >
+              <option value="">Todas</option>
+              {(Object.keys(ORDEM_COMPRA_STATUS) as OrdemCompraStatusFluxo[]).map((s) => (
+                <option key={s} value={s}>
+                  {ORDEM_COMPRA_STATUS[s].label}
+                </option>
+              ))}
+            </select>
+          </CampoFiltro>
+
+          <CampoFiltro rotulo="Número">
+            <input
+              className="field w-full"
+              inputMode="numeric"
+              placeholder="1"
+              value={rascunho.numero}
+              onChange={(e) => setRascunho({ ...rascunho, numero: e.target.value })}
+            />
+          </CampoFiltro>
+
+          <CampoFiltro rotulo="Obra">
+            <select
+              className="field w-full"
+              value={rascunho.obraId}
+              onChange={(e) => setRascunho({ ...rascunho, obraId: e.target.value })}
+            >
+              <option value="">Todas</option>
+              {obras.map((o) => (
+                <option key={o.id} value={o.id}>
+                  {o.nome}
+                </option>
+              ))}
+            </select>
+          </CampoFiltro>
+
+          <CampoFiltro rotulo="Fornecedor">
+            <select
+              className="field w-full"
+              value={rascunho.fornecedorId}
+              onChange={(e) => setRascunho({ ...rascunho, fornecedorId: e.target.value })}
+            >
+              <option value="">Todos</option>
+              {fornecedores.map((f) => (
+                <option key={f.id} value={f.id}>
+                  {f.nome}
+                </option>
+              ))}
+            </select>
+          </CampoFiltro>
+
+          <FaixaDeData
+            rotulo="Data"
+            de={rascunho.dataDe}
+            ate={rascunho.dataAte}
+            onDe={(v) => setRascunho({ ...rascunho, dataDe: v })}
+            onAte={(v) => setRascunho({ ...rascunho, dataAte: v })}
+          />
+        </PainelFiltros>
+
+        <div className="flex-1 min-w-0">
+          {filtradas.length > 0 && (
+            <p className="mb-3 text-sm text-muted-foreground">
+              {filtradas.length} {filtradas.length === 1 ? "ordem" : "ordens"} · {money(total)}
+            </p>
+          )}
+
+          <div className="rounded-lg border border-line bg-card p-6 overflow-x-auto">
         {loading ? (
           <p className="text-muted-foreground">Carregando...</p>
         ) : filtradas.length === 0 ? (
           <p className="text-sm text-muted-foreground">
-            Nenhuma ordem de compra. Gere uma a partir de um mapa de cotação.
+            {jaBuscou ? SEM_RESULTADO : `Nenhuma ordem de compra. ${SEM_BUSCA}`}
           </p>
         ) : (
           <table className="w-full text-sm">
@@ -276,6 +322,13 @@ ${oc.observacao || ""}`;
                       >
                         Copiar
                       </button>
+                      <button
+                        onClick={() => void copiarLinkPublico(oc)}
+                        title="Gera um link que o fornecedor abre sem login"
+                        className="text-xs text-cta hover:underline"
+                      >
+                        {linkCopiado === oc.id ? "Link copiado!" : "Copiar link"}
+                      </button>
                       {(PROXIMO[oc.status] || []).map((p) => (
                         <button
                           key={p.status}
@@ -300,6 +353,8 @@ ${oc.observacao || ""}`;
             </tbody>
           </table>
         )}
+          </div>
+        </div>
       </div>
     </ErpLayout>
   );

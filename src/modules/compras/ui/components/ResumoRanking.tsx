@@ -3,11 +3,22 @@ import type { Ranking } from '@/modules/compras/domain/types';
 import { money } from '@/components/ErpLayout';
 
 export function ResumoRanking({ rankings }: { rankings: Ranking[] }) {
-  const winnerBruto = rankings?.[0]?.fornecedorId;
-  const winnerPresente = useMemo(() => {
-    if (!rankings || rankings.length === 0) return undefined;
-    return rankings.slice().sort((a, b) => a.totalPresente.toNumber() - b.totalPresente.toNumber())[0]?.fornecedorId;
-  }, [rankings]);
+  const winnerBruto = useMemo(
+    () => rankings.slice().sort((a, b) => a.totalBruto.toNumber() - b.totalBruto.toNumber())[0]?.fornecedorId,
+    [rankings],
+  );
+
+  const winnerPresente = useMemo(
+    () => rankings.slice().sort((a, b) => a.totalPresente.toNumber() - b.totalPresente.toNumber())[0]?.fornecedorId,
+    [rankings],
+  );
+
+  const diff = useMemo(() => {
+    const bruto = rankings.find((r) => r.fornecedorId === winnerBruto);
+    const presente = rankings.find((r) => r.fornecedorId === winnerPresente);
+    if (!bruto || !presente) return null;
+    return presente.totalPresente.minus(bruto.totalPresente).abs();
+  }, [rankings, winnerBruto, winnerPresente]);
 
   return (
     <div className="rounded-lg border border-line bg-card p-4 mb-6">
@@ -27,8 +38,10 @@ export function ResumoRanking({ rankings }: { rankings: Ranking[] }) {
           ))}
         </div>
       )}
-      {winnerBruto && winnerPresente && winnerBruto !== winnerPresente && (
-        <p className="mt-4 text-sm text-cta">Insight: melhor por preço bruto ({winnerBruto}) difere do melhor por valor presente ({winnerPresente}).</p>
+      {winnerBruto && winnerPresente && winnerBruto !== winnerPresente && diff && (
+        <p className="mt-4 text-sm text-cta">
+          Fornecedor {winnerPresente} é {money(diff.toNumber())} mais barato a valor presente que {winnerBruto}.
+        </p>
       )}
     </div>
   );
