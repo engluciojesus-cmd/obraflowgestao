@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
+    "test": "vitest run",
     "preview": "vite preview",
     "types": "supabase gen types typescript --linked > src/core/supabase/database.types.ts"
   },
