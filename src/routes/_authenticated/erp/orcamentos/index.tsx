@@ -4,6 +4,12 @@ import { supabase } from "@/integrations/supabase/client";
 import { useActiveCompany, useAuthUser } from "@/hooks/useAuth";
 import { ErpLayout, StatusBadge, money } from "@/components/ErpLayout";
 import type { Orcamento, Cliente, Obra } from "@/types";
+import {
+  METODOS,
+  METODOS_ORDENADOS,
+  METODO_PADRAO,
+  type MetodoOrcamento,
+} from "@/modules/orcamentos/domain/metodos";
 
 export const Route = createFileRoute("/_authenticated/erp/orcamentos/")({
   head: () => ({ meta: [{ title: "Orçamentos — ObraFlow Gestão" }] }),
@@ -265,6 +271,7 @@ function NovoOrcamentoForm({
   const [clienteId, setClienteId] = useState("");
   const [obraId, setObraId] = useState("");
   const [usaFases, setUsaFases] = useState(false);
+  const [metodo, setMetodo] = useState<MetodoOrcamento>(METODO_PADRAO);
   const [loading, setLoading] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
   const [createdId, setCreatedId] = useState<string | null>(null);
@@ -282,6 +289,7 @@ function NovoOrcamentoForm({
           cliente_id: clienteId || null,
           obra_id: obraId || null,
           usa_fases: usaFases,
+          metodo,
           responsavel: user?.full_name || user?.username || null,
           valor: 0,
         })
@@ -348,6 +356,21 @@ function NovoOrcamentoForm({
           </select>
         </div>
 
+        {/* Define quanta informação a tela do orçamento vai pedir depois. */}
+        <div className="md:col-span-2">
+          <label className="block text-xs font-semibold text-muted-foreground mb-1">Método de elaboração</label>
+          <select className="field" value={metodo} onChange={(e) => setMetodo(e.target.value as any)}>
+            {METODOS_ORDENADOS.map((m) => (
+              <option key={m.chave} value={m.chave}>
+                {m.label}
+              </option>
+            ))}
+          </select>
+          <p className="mt-1 text-xs text-muted-foreground">{METODOS[metodo].resumo}</p>
+        </div>
+
+        {/* Fase não faz sentido num orçamento de uma linha só. */}
+        {metodo !== "FECHADO" && (
         <label className="md:col-span-2 flex items-center gap-3 rounded-lg border border-line bg-side p-3">
           <input type="checkbox" checked={usaFases} onChange={(e) => setUsaFases(e.target.checked)} className="w-4 h-4" />
           <div>
@@ -357,6 +380,7 @@ function NovoOrcamentoForm({
             </p>
           </div>
         </label>
+        )}
 
         {erro && <p className="md:col-span-2 text-sm text-err">{erro}</p>}
 

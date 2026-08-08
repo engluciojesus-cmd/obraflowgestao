@@ -12,6 +12,134 @@ import type {
   ItemModo,
 } from "@/types";
 import { itemTotal } from "@/types";
+import { calcularPesos, fechaCem, valorDoPeso } from "@/modules/orcamentos/domain/pesos";
+import { camposVisiveis, metodoDe, METODOS } from "@/modules/orcamentos/domain/metodos";
+
+/**
+ * Método FECHADO: uma descrição e um valor. Por baixo grava a mesma árvore
+ * serviço → item que os outros métodos, com um serviço Misto de peso 100 e um
+ * item em verba — é o que mantém apropriação, medição e comprometido de pé sem
+ * nenhum caso especial rio abaixo.
+ */
+function PainelFechado({
+  orcamentoId,
+  valorAtual,
+  servico,
+  locked,
+  onChange,
+}: {
+  orcamentoId: string;
+  valorAtual: number;
+  servico?: ServicoComItens;
+  locked: boolean;
+  onChange: () => void;
+}) {
+  const item = servico?.itens[0];
+  const [descricao, setDescricao] = useState(item?.descricao ?? servico?.nome ?? "");
+  const [valor, setValor] = useState(valorAtual ? String(valorAtual) : "");
+  const [salvando, setSalvando] = useState(false);
+  const [erro, setErro] = useState<string | null>(null);
+
+  async function salvar() {
+    if (!descricao.trim()) {
+      setErro("Descreva o serviço.");
+      return;
+    }
+    setSalvando(true);
+    setErro(null);
+    const nome = descricao.trim().toUpperCase();
+    const v = Number(valor) || 0;
+
+    try {
+      const { error: e1 } = await supabase
+        .from("orcamentos")
+        .update({ valor: v })
+        .eq("id", orcamentoId);
+      if (e1) throw e1;
+
+      let servicoId = servico?.id;
+      if (servicoId) {
+        const { error } = await supabase
+          .from("orcamento_servicos")
+          .update({ nome, tipo: "Misto", peso: 100 })
+          .eq("id", servicoId);
+        if (error) throw error;
+      } else {
+        const { data, error } = await supabase
+          .from("orcamento_servicos")
+          .insert({ orcamento_id: orcamentoId, fase_id: null, nome, tipo: "Misto", peso: 100, ordem: 0 })
+          .select("id")
+          .single();
+        if (error) throw error;
+        servicoId = data.id;
+      }
+
+      const campos = {
+        descricao: nome,
+        modo: "verba",
+        unidade: "VB",
+        quantidade: null,
+        valor_unitario: 0,
+        valor_verba: v,
+        peso: 100,
+      };
+      const { error: e2 } = item
+        ? await supabase.from("orcamento_itens").update(campos).eq("id", item.id)
+        : await supabase.from("orcamento_itens").insert({ servico_id: servicoId, ordem: 0, ...campos });
+      if (e2) throw e2;
+
+      onChange();
+    } catch (err: any) {
+      setErro(err?.message ?? "Erro ao salvar.");
+    } finally {
+      setSalvando(false);
+    }
+  }
+
+  return (
+    <div className="rounded-lg border border-line bg-card p-6">
+      <p className="mb-4 text-xs text-muted-foreground">
+        Orçamento fechado: um serviço, um valor. Sem fases, sem itens, sem peso — se precisar
+        destrinchar depois, crie um orçamento analítico ou percentual.
+      </p>
+
+      <div className="grid gap-4 md:grid-cols-3">
+        <div className="md:col-span-2">
+          <label className="mb-1 block text-xs font-semibold text-muted-foreground">
+            Descrição do serviço
+          </label>
+          <input
+            className="field w-full"
+            value={descricao}
+            disabled={locked}
+            placeholder="Ex: REFORMA DE TELHADO — MÃO DE OBRA E MATERIAL"
+            onChange={(e) => setDescricao(e.target.value)}
+          />
+        </div>
+        <div>
+          <label className="mb-1 block text-xs font-semibold text-muted-foreground">Valor (R$)</label>
+          <input
+            type="number"
+            step="0.01"
+            className="field w-full"
+            value={valor}
+            disabled={locked}
+            placeholder="0,00"
+            onChange={(e) => setValor(e.target.value)}
+          />
+        </div>
+      </div>
+
+      {erro && <p className="mt-3 text-sm text-err">{erro}</p>}
+
+      {!locked && (
+        <button type="button" onClick={salvar} disabled={salvando} className="btn-cta mt-4 disabled:opacity-50">
+          {salvando ? "Salvando..." : "Salvar orçamento"}
+        </button>
+      )}
+    </div>
+  );
+}
 
 export const Route = createFileRoute("/_authenticated/erp/orcamentos/$orcamentoId")({
   head: () => ({ meta: [{ title: "Orçamento — ObraFlow Gestão" }] }),
@@ -117,9 +245,25 @@ function OrcamentoBuilder() {
   );
 
   // sincroniza valor/percentual_consumo na tabela orcamentos (rollup)
+  //
+  // ⚠️ No método PERCENTUAL, `orcamentos.valor` É o valor do contrato digitado
+  // pelo usuário — a fonte da verdade de onde todo R$ deriva. Fazer o rollup
+  // aqui zeraria o contrato, porque nesse modo os itens não têm valor próprio.
   useEffect(() => {
     if (!orcamento || loading) return;
-    const pct = total > 0 ? Math.round((comprometido / total) * 100) : 0;
+    // Só o analítico deriva o valor da soma dos itens. No percentual e no
+    // fechado o `valor` é digitado, e o rollup apagaria o que o usuário pôs.
+    const valorEhDigitado = metodoDe((orcamento as any).metodo) !== "QUANTITATIVO";
+    const base = valorEhDigitado ? Number(orcamento.valor || 0) : total;
+    const pct = base > 0 ? Math.round((comprometido / base) * 100) : 0;
+
+    if (valorEhDigitado) {
+      if (orcamento.percentual_consumo !== pct) {
+        supabase.from("orcamentos").update({ percentual_consumo: pct }).eq("id", orcamento.id);
+      }
+      return;
+    }
+
     if (Number(orcamento.valor) !== total || orcamento.percentual_consumo !== pct) {
       supabase.from("orcamentos").update({ valor: total, percentual_consumo: pct }).eq("id", orcamento.id);
     }
@@ -207,8 +351,27 @@ function OrcamentoBuilder() {
   const locked = orcamento.status === "APROVADO";
   const servicosSemFase = servicos.filter((s) => !s.fase_id);
 
-  // Peso do serviço: usa o informado; o que sobra é rateado pelos serviços
-  // sem peso, proporcional ao valor de cada um.
+  const metodo = metodoDe((orcamento as any).metodo);
+  const campos = camposVisiveis(metodo);
+  const ehPercentual = campos.peso;
+  // No modo PERCENTUAL o contrato é a fonte da verdade e o R$ é derivado dele.
+  const valorContrato = Number(orcamento.valor || 0);
+  /** Denominador de comprometido/saldo: o contrato quando ele é digitado, a soma quando é derivado. */
+  const baseFinanceira = campos.valorContratoEditavel ? valorContrato : total;
+
+  // ---- Modo PERCENTUAL: a regra pura vive em domain/pesos.ts, testada ----
+  const pesosPercentual = calcularPesos(
+    servicos.map((sv) => ({
+      id: sv.id,
+      pesoInformado: Number(sv.peso) ? Number(sv.peso) : null,
+      itens: sv.itens.map((it) => ({
+        id: it.id,
+        pesoInformado: it.peso == null || it.peso === 0 ? null : Number(it.peso),
+      })),
+    }))
+  );
+
+  // ---- Modo QUANTITATIVO: peso derivado do valor, como antes ----
   const pesosInformados = servicos.reduce((s, sv) => s + Number(sv.peso || 0), 0);
   const semPeso = servicos.filter((sv) => !Number(sv.peso));
   const valorSemPeso = semPeso.reduce(
@@ -218,13 +381,16 @@ function OrcamentoBuilder() {
   const sobra = Math.max(100 - pesosInformados, 0);
 
   function pesoEfetivo(sv: ServicoComItens) {
+    if (ehPercentual) return pesosPercentual.servicos.get(sv.id)?.peso ?? 0;
     if (Number(sv.peso)) return Number(sv.peso);
     if (valorSemPeso <= 0) return 0;
     const valor = sv.itens.reduce((s, it) => s + itemTotal(it), 0);
     return (valor / valorSemPeso) * sobra;
   }
 
-  const somaPesos = servicos.reduce((s, sv) => s + pesoEfetivo(sv), 0);
+  const somaPesos = ehPercentual
+    ? pesosPercentual.total
+    : servicos.reduce((s, sv) => s + pesoEfetivo(sv), 0);
 
   return (
     <ErpLayout
@@ -285,27 +451,76 @@ function OrcamentoBuilder() {
           <p className="mt-1 text-sm font-semibold">{orcamento.obra?.nome || "Não vinculada"}</p>
         </div>
         <div className="rounded-lg border border-line bg-card p-4">
-          <p className="text-xs font-semibold text-muted-foreground uppercase">Total orçado</p>
-          <p className="mt-1 text-lg font-bold">{money(total)}</p>
+          <p className="text-xs font-semibold text-muted-foreground uppercase">
+            {campos.valorContratoEditavel ? "Valor do contrato" : "Total orçado"}
+          </p>
+          {ehPercentual && !locked ? (
+            <input
+              type="number"
+              step="0.01"
+              className="field mt-1 w-full text-lg font-bold"
+              defaultValue={valorContrato || ""}
+              placeholder="0,00"
+              onBlur={async (e) => {
+                const novo = Number(e.target.value) || 0;
+                if (novo === valorContrato) return;
+                await supabase.from("orcamentos").update({ valor: novo }).eq("id", orcamentoId);
+                load();
+              }}
+            />
+          ) : (
+            <p className="mt-1 text-lg font-bold">
+              {money(campos.valorContratoEditavel ? valorContrato : total)}
+            </p>
+          )}
+          {ehPercentual && <p className="mt-1 text-xs text-muted-foreground">Todo R$ deriva daqui</p>}
         </div>
         <div className="rounded-lg border border-line bg-card p-4">
           <p className="text-xs font-semibold text-muted-foreground uppercase">Comprometido</p>
           <p className="mt-1 text-lg font-bold">{money(comprometido)}</p>
-          <p className={`text-xs ${total > 0 && comprometido / total > 1 ? "text-err font-semibold" : "text-muted-foreground"}`}>
-            {total > 0 ? Math.round((comprometido / total) * 100) : 0}%
+          <p className={`text-xs ${baseFinanceira > 0 && comprometido / baseFinanceira > 1 ? "text-err font-semibold" : "text-muted-foreground"}`}>
+            {baseFinanceira > 0 ? Math.round((comprometido / baseFinanceira) * 100) : 0}%
           </p>
         </div>
         <div className="rounded-lg border border-line bg-card p-4">
           <p className="text-xs font-semibold text-muted-foreground uppercase">Saldo</p>
-          <p className="mt-1 text-lg font-bold">{money(Math.max(total - comprometido, 0))}</p>
+          <p className="mt-1 text-lg font-bold">{money(Math.max(baseFinanceira - comprometido, 0))}</p>
         </div>
       </div>
 
-      {somaPesos !== 100 && servicos.length > 0 && (
+      {/* No modo percentual fechar 100% é a única regra dura do orçamento. */}
+      {ehPercentual && servicos.length > 0 && (
+        <p
+          className={`mb-4 rounded-lg border px-4 py-2 text-sm ${
+            fechaCem(somaPesos)
+              ? "border-ok/40 bg-ok/10 text-ok"
+              : "border-err/40 bg-err/10 text-err font-semibold"
+          }`}
+        >
+          Soma dos pesos: {somaPesos.toFixed(2)}%
+          {fechaCem(somaPesos)
+            ? " — fecha 100%."
+            : ` — faltam ${(100 - somaPesos).toFixed(2)}% para fechar 100%.`}
+        </p>
+      )}
+
+      {campos.quantitativo && somaPesos !== 100 && servicos.length > 0 && (
         <p className="mb-4 text-xs text-muted-foreground">
           Soma dos pesos dos serviços: <strong>{somaPesos.toFixed(1)}%</strong> (recomendado somar 100% para refletir corretamente o avanço da obra)
         </p>
       )}
+
+      {/* ⭐ Método fechado: nada de fase, serviço ou item — só descrição e valor. */}
+      {!campos.estrutura ? (
+        <PainelFechado
+          orcamentoId={orcamentoId}
+          valorAtual={valorContrato}
+          servico={servicos[0]}
+          locked={locked}
+          onChange={load}
+        />
+      ) : (
+        <>
 
       {/* Ações de estrutura */}
       {!locked && (
@@ -349,7 +564,16 @@ function OrcamentoBuilder() {
               </div>
               <div className="p-6 space-y-4">
                 {svs.map((sv) => (
-                  <ServicoBlock key={sv.id} servico={sv} peso={pesoEfetivo(sv)} locked={locked} onChange={load} />
+                  <ServicoBlock
+                    key={sv.id}
+                    servico={sv}
+                    peso={pesoEfetivo(sv)}
+                    locked={locked}
+                    ehPercentual={ehPercentual}
+                    valorContrato={valorContrato}
+                    pesosItens={pesosPercentual.itens}
+                    onChange={load}
+                  />
                 ))}
                 {!locked && (
                   <button
@@ -381,7 +605,16 @@ function OrcamentoBuilder() {
         <div className="mb-6 rounded-lg border border-line bg-card p-6 space-y-4">
           {orcamento.usa_fases && <h3 className="font-bold text-sm uppercase text-muted-foreground">Sem fase</h3>}
           {servicosSemFase.map((sv) => (
-            <ServicoBlock key={sv.id} servico={sv} peso={pesoEfetivo(sv)} locked={locked} onChange={load} />
+            <ServicoBlock
+                    key={sv.id}
+                    servico={sv}
+                    peso={pesoEfetivo(sv)}
+                    locked={locked}
+                    ehPercentual={ehPercentual}
+                    valorContrato={valorContrato}
+                    pesosItens={pesosPercentual.itens}
+                    onChange={load}
+                  />
           ))}
         </div>
       )}
@@ -404,6 +637,9 @@ function OrcamentoBuilder() {
           Nenhum serviço adicionado ainda.
         </div>
       )}
+        </>
+      )}
+
       {showPdf && (
         <PdfModal
           orcamento={orcamento}
@@ -654,36 +890,50 @@ function FaseForm({
   );
 }
 
+/** O mínimo que o formulário precisa saber de um serviço para editá-lo. */
+type ServicoLike = { id: string; nome: string; tipo: string; peso: number };
+
 function ServicoForm({
   orcamentoId,
   faseId,
   ordem,
+  servico,
   onDone,
   onCancel,
 }: {
   orcamentoId: string;
   faseId: string | null;
   ordem: number;
+  /** Presente = edição; ausente = criação. */
+  servico?: ServicoLike;
   onDone: () => void;
   onCancel: () => void;
 }) {
-  const [nome, setNome] = useState("");
-  const [tipo, setTipo] = useState<"Serviço" | "Material" | "Misto">("Serviço");
-  const [peso, setPeso] = useState("");
+  const [nome, setNome] = useState(servico?.nome ?? "");
+  const [tipo, setTipo] = useState<"Serviço" | "Material" | "Misto">(
+    (servico?.tipo as any) ?? "Serviço"
+  );
+  const [peso, setPeso] = useState(servico?.peso ? String(servico.peso) : "");
   const [loading, setLoading] = useState(false);
+  const [erro, setErro] = useState<string | null>(null);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setLoading(true);
-    await supabase.from("orcamento_servicos").insert({
-      orcamento_id: orcamentoId,
-      fase_id: faseId,
-      nome: nome.toUpperCase(),
-      tipo,
-      peso: Number(peso) || 0,
-      ordem,
-    });
+    setErro(null);
+    const campos = { nome: nome.toUpperCase(), tipo, peso: Number(peso) || 0 };
+
+    const { error } = servico
+      ? await supabase.from("orcamento_servicos").update(campos).eq("id", servico.id)
+      : await supabase
+          .from("orcamento_servicos")
+          .insert({ orcamento_id: orcamentoId, fase_id: faseId, ordem, ...campos });
+
     setLoading(false);
+    if (error) {
+      setErro(error.message);
+      return;
+    }
     onDone();
   }
 
@@ -711,9 +961,10 @@ function ServicoForm({
           onChange={(e) => setPeso(e.target.value)}
         />
       </div>
+      {erro && <p className="md:col-span-4 text-xs text-err">{erro}</p>}
       <div className="md:col-span-4 flex gap-3">
         <button type="submit" disabled={loading} className="btn-cta text-sm">
-          Salvar serviço
+          {servico ? "Salvar alterações" : "Salvar serviço"}
         </button>
         <button type="button" onClick={onCancel} className="rounded-lg bg-side px-4 py-2 text-sm font-semibold hover:bg-side/80">
           Cancelar
@@ -727,15 +978,26 @@ function ServicoBlock({
   servico,
   peso,
   locked,
+  ehPercentual,
+  valorContrato,
+  pesosItens,
   onChange,
 }: {
   servico: ServicoComItens;
   peso: number;
   locked: boolean;
+  ehPercentual: boolean;
+  valorContrato: number;
+  pesosItens: Map<string, { peso: number; sugerido: boolean }>;
   onChange: () => void;
 }) {
   const [showItemForm, setShowItemForm] = useState(false);
-  const subtotal = servico.itens.reduce((s, it) => s + itemTotal(it), 0);
+  const [editandoServico, setEditandoServico] = useState(false);
+  const [itemEmEdicao, setItemEmEdicao] = useState<OrcamentoItem | null>(null);
+  // No percentual o subtotal do serviço é o % dele aplicado sobre o contrato.
+  const subtotal = ehPercentual
+    ? valorDoPeso(peso, valorContrato)
+    : servico.itens.reduce((s, it) => s + itemTotal(it), 0);
 
   async function removeServico() {
     if (!confirm(`Excluir o serviço "${servico.nome}" e todos os seus itens?`)) return;
@@ -754,29 +1016,70 @@ function ServicoBlock({
         <div>
           <span className="text-sm font-semibold">{servico.nome}</span>
           <span className="ml-2 text-xs text-muted-foreground">
-            {servico.tipo} · peso {peso.toFixed(1)}%
-            {!Number(servico.peso) && <span className="ml-1">(automático)</span>}
+            {servico.tipo} · peso {peso.toFixed(2)}%
+            {ehPercentual ? (
+              servico.itens.length > 0 ? (
+                <span className="ml-1">(soma dos subitens)</span>
+              ) : !Number(servico.peso) ? (
+                <span className="ml-1 text-cta">(sugerido — digite para fixar)</span>
+              ) : null
+            ) : (
+              !Number(servico.peso) && <span className="ml-1">(automático)</span>
+            )}
           </span>
         </div>
         <div className="flex items-center gap-3">
           <span className="text-sm font-semibold">{money(subtotal)}</span>
           {!locked && (
-            <button onClick={removeServico} className="text-xs text-err hover:underline">
-              Excluir
-            </button>
+            <>
+              <button
+                onClick={() => setEditandoServico((v) => !v)}
+                className="text-xs text-cta hover:underline"
+              >
+                {editandoServico ? "Fechar" : "Editar"}
+              </button>
+              <button onClick={removeServico} className="text-xs text-err hover:underline">
+                Excluir
+              </button>
+            </>
           )}
         </div>
       </div>
+
+      {editandoServico && !locked && (
+        <div className="border-b border-line p-3">
+          <ServicoForm
+            orcamentoId={servico.orcamento_id}
+            faseId={servico.fase_id ?? null}
+            ordem={servico.ordem}
+            servico={{ id: servico.id, nome: servico.nome, tipo: servico.tipo, peso: Number(servico.peso) }}
+            onDone={() => {
+              setEditandoServico(false);
+              onChange();
+            }}
+            onCancel={() => setEditandoServico(false)}
+          />
+        </div>
+      )}
 
       {servico.itens.length > 0 && (
         <table className="w-full text-xs">
           <thead>
             <tr className="text-left text-muted-foreground border-b border-line">
               <th className="px-4 py-1.5">Descrição</th>
-              <th className="px-2 py-1.5">Qtd</th>
-              <th className="px-2 py-1.5">Un</th>
-              <th className="px-2 py-1.5">Vr. Unit.</th>
-              <th className="px-2 py-1.5">Total</th>
+              {ehPercentual ? (
+                <>
+                  <th className="px-2 py-1.5 text-right">Peso (%)</th>
+                  <th className="px-2 py-1.5 text-right">Valor (R$)</th>
+                </>
+              ) : (
+                <>
+                  <th className="px-2 py-1.5">Qtd</th>
+                  <th className="px-2 py-1.5">Un</th>
+                  <th className="px-2 py-1.5">Vr. Unit.</th>
+                  <th className="px-2 py-1.5">Total</th>
+                </>
+              )}
               {!locked && <th className="px-2 py-1.5"></th>}
             </tr>
           </thead>
@@ -789,17 +1092,46 @@ function ServicoBlock({
                     <span className="block text-muted-foreground italic">{it.memoria_calculo}</span>
                   )}
                 </td>
-                <td className="px-2 py-1.5">{it.modo === "verba" ? "VERBA" : it.quantidade}</td>
-                <td className="px-2 py-1.5">{it.modo === "verba" ? "VB" : it.unidade}</td>
-                <td className="px-2 py-1.5">
-                  {money(it.modo === "verba" ? it.valor_verba : it.valor_unitario)}
-                </td>
-                <td className="px-2 py-1.5 font-semibold">{money(itemTotal(it))}</td>
+                {ehPercentual ? (
+                  <>
+                    <td className="px-2 py-1.5 text-right tabular-nums">
+                      {(pesosItens.get(it.id)?.peso ?? 0).toFixed(2)}%
+                      {pesosItens.get(it.id)?.sugerido && (
+                        <span className="ml-1 text-cta" title="Sugerido pela sobra — digite para fixar">
+                          ~
+                        </span>
+                      )}
+                    </td>
+                    <td className="px-2 py-1.5 text-right font-semibold tabular-nums">
+                      {money(valorDoPeso(pesosItens.get(it.id)?.peso ?? 0, valorContrato))}
+                    </td>
+                  </>
+                ) : (
+                  <>
+                    <td className="px-2 py-1.5">{it.modo === "verba" ? "VERBA" : it.quantidade}</td>
+                    <td className="px-2 py-1.5">{it.modo === "verba" ? "VB" : it.unidade}</td>
+                    <td className="px-2 py-1.5">
+                      {money(it.modo === "verba" ? it.valor_verba : it.valor_unitario)}
+                    </td>
+                    <td className="px-2 py-1.5 font-semibold">{money(itemTotal(it))}</td>
+                  </>
+                )}
                 {!locked && (
                   <td className="px-2 py-1.5">
-                    <button onClick={() => removeItem(it.id)} className="text-err hover:underline">
-                      Remover
-                    </button>
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => {
+                          setItemEmEdicao(it);
+                          setShowItemForm(false);
+                        }}
+                        className="text-cta hover:underline"
+                      >
+                        Editar
+                      </button>
+                      <button onClick={() => removeItem(it.id)} className="text-err hover:underline">
+                        Remover
+                      </button>
+                    </div>
                   </td>
                 )}
               </tr>
@@ -810,9 +1142,23 @@ function ServicoBlock({
 
       {!locked && (
         <div className="p-3 border-t border-line">
-          {showItemForm ? (
+          {itemEmEdicao ? (
+            <ItemForm
+              key={itemEmEdicao.id}
+              servicoId={servico.id}
+              ehPercentual={ehPercentual}
+              ordem={itemEmEdicao.ordem}
+              item={itemEmEdicao}
+              onDone={() => {
+                setItemEmEdicao(null);
+                onChange();
+              }}
+              onCancel={() => setItemEmEdicao(null)}
+            />
+          ) : showItemForm ? (
             <ItemForm
               servicoId={servico.id}
+              ehPercentual={ehPercentual}
               ordem={servico.itens.length}
               onDone={() => {
                 setShowItemForm(false);
@@ -834,30 +1180,36 @@ function ServicoBlock({
 function ItemForm({
   servicoId,
   ordem,
+  item,
+  ehPercentual,
   onDone,
   onCancel,
 }: {
   servicoId: string;
   ordem: number;
+  /** Presente = edição; ausente = criação. */
+  item?: OrcamentoItem;
+  ehPercentual: boolean;
   onDone: () => void;
   onCancel: () => void;
 }) {
-  const [descricao, setDescricao] = useState("");
-  const [modo, setModo] = useState<ItemModo>("aberto");
-  const [quantidade, setQuantidade] = useState("1");
-  const [unidade, setUnidade] = useState("un");
-  const [valorUnitario, setValorUnitario] = useState("");
-  const [valorVerba, setValorVerba] = useState("");
-  const [memoriaCalculo, setMemoriaCalculo] = useState("");
-  const [observacoes, setObservacoes] = useState("");
-  const [peso, setPeso] = useState("");
+  const [descricao, setDescricao] = useState(item?.descricao ?? "");
+  const [modo, setModo] = useState<ItemModo>(item?.modo ?? "aberto");
+  const [quantidade, setQuantidade] = useState(item ? String(Number(item.quantidade) || 1) : "1");
+  const [unidade, setUnidade] = useState(item?.unidade || "un");
+  const [valorUnitario, setValorUnitario] = useState(item ? String(Number(item.valor_unitario) || "") : "");
+  const [valorVerba, setValorVerba] = useState(item ? String(Number(item.valor_verba) || "") : "");
+  const [memoriaCalculo, setMemoriaCalculo] = useState(item?.memoria_calculo ?? "");
+  const [observacoes, setObservacoes] = useState(item?.observacoes ?? "");
+  const [peso, setPeso] = useState(item?.peso != null ? String(item.peso) : "");
   const [loading, setLoading] = useState(false);
+  const [erro, setErro] = useState<string | null>(null);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setLoading(true);
-    await supabase.from("orcamento_itens").insert({
-      servico_id: servicoId,
+    setErro(null);
+    const campos = {
       descricao: descricao.toUpperCase(),
       modo,
       quantidade: modo === "aberto" ? Number(quantidade) || 1 : null,
@@ -867,9 +1219,17 @@ function ItemForm({
       memoria_calculo: memoriaCalculo || null,
       observacoes: observacoes || null,
       peso: peso === "" ? null : Number(peso),
-      ordem,
-    });
+    };
+
+    const { error } = item
+      ? await supabase.from("orcamento_itens").update(campos).eq("id", item.id)
+      : await supabase.from("orcamento_itens").insert({ servico_id: servicoId, ordem, ...campos });
+
     setLoading(false);
+    if (error) {
+      setErro(error.message);
+      return;
+    }
     onDone();
   }
 
@@ -879,15 +1239,34 @@ function ItemForm({
         <label className="block text-xs font-semibold text-muted-foreground mb-1">Descrição</label>
         <input required className="field text-sm" value={descricao} onChange={(e) => setDescricao(e.target.value)} />
       </div>
-      <div>
-        <label className="block text-xs font-semibold text-muted-foreground mb-1">Modo</label>
-        <select className="field text-sm" value={modo} onChange={(e) => setModo(e.target.value as ItemModo)}>
-          <option value="aberto">Aberto (qtd × un.)</option>
-          <option value="verba">Verba (fechado)</option>
-        </select>
-      </div>
+      {/* No modo percentual o item não tem valor próprio: o R$ deriva do peso. */}
+      {ehPercentual && (
+        <div className="md:col-span-2">
+          <label className="block text-xs font-semibold text-muted-foreground mb-1">
+            Peso no contrato (%)
+          </label>
+          <input
+            type="number"
+            step="0.01"
+            className="field text-sm"
+            placeholder="deixe vazio para sugerir"
+            value={peso}
+            onChange={(e) => setPeso(e.target.value)}
+          />
+        </div>
+      )}
 
-      {modo === "aberto" ? (
+      {!ehPercentual && (
+        <div>
+          <label className="block text-xs font-semibold text-muted-foreground mb-1">Modo</label>
+          <select className="field text-sm" value={modo} onChange={(e) => setModo(e.target.value as ItemModo)}>
+            <option value="aberto">Aberto (qtd × un.)</option>
+            <option value="verba">Verba (fechado)</option>
+          </select>
+        </div>
+      )}
+
+      {ehPercentual ? null : modo === "aberto" ? (
         <>
           <div>
             <label className="block text-xs font-semibold text-muted-foreground mb-1">Qtd</label>
@@ -935,21 +1314,25 @@ function ItemForm({
         <label className="block text-xs font-semibold text-muted-foreground mb-1">Observações (opcional)</label>
         <input className="field text-sm" value={observacoes} onChange={(e) => setObservacoes(e.target.value)} />
       </div>
-      <div>
-        <label className="block text-xs font-semibold text-muted-foreground mb-1">Peso no serviço (%)</label>
-        <input
-          type="number"
-          step="0.01"
-          className="field text-sm"
-          placeholder="auto"
-          value={peso}
-          onChange={(e) => setPeso(e.target.value)}
-        />
-      </div>
+      {/* No percentual este campo já apareceu lá em cima, como peso do contrato. */}
+      {!ehPercentual && (
+        <div>
+          <label className="block text-xs font-semibold text-muted-foreground mb-1">Peso no serviço (%)</label>
+          <input
+            type="number"
+            step="0.01"
+            className="field text-sm"
+            placeholder="auto"
+            value={peso}
+            onChange={(e) => setPeso(e.target.value)}
+          />
+        </div>
+      )}
 
       <div className="md:col-span-6 flex gap-3">
+        {erro && <p className="md:col-span-6 text-xs text-err">{erro}</p>}
         <button type="submit" disabled={loading} className="btn-cta text-sm">
-          Salvar item
+          {item ? "Salvar alterações" : "Salvar item"}
         </button>
         <button type="button" onClick={onCancel} className="rounded-lg bg-side px-4 py-2 text-sm font-semibold hover:bg-side/80">
           Cancelar
