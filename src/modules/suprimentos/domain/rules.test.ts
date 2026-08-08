@@ -6,6 +6,7 @@ import {
   saldoItem,
   percentualRecebido,
   statusPendentesPorTela,
+  itensDaSituacaoRequisicao,
   sugestaoMenorUnitario,
   sugestaoMenorGlobal,
 } from './rules';
@@ -139,5 +140,26 @@ describe('mapa de cotação — sugestões', () => {
 
     const global = sugestaoMenorGlobal(itens as any, propostas as any, condicoes as any);
     expect(global).toBe('D');
+  });
+});
+
+describe('itensDaSituacaoRequisicao', () => {
+  it('COTADA cobre EM_COTACAO e COTADA — era o buraco do filtro', () => {
+    // Gerar cotação põe o item em EM_COTACAO. Filtrar só pelo cabeçalho
+    // "COTADA" perdia toda requisição parcialmente cotada.
+    expect(itensDaSituacaoRequisicao('COTADA')).toEqual(['EM_COTACAO', 'COTADA']);
+  });
+
+  it('OC_GERADA cobre o item recebido pela metade', () => {
+    expect(itensDaSituacaoRequisicao('OC_GERADA')).toEqual(['EM_OC', 'RECEBIDO_PARCIAL']);
+  });
+
+  it('PARCIAL não tem equivalente por item — é propriedade do conjunto', () => {
+    expect(itensDaSituacaoRequisicao('PARCIAL')).toEqual([]);
+    expect(itensDaSituacaoRequisicao('CONTRATO_GERADO')).toEqual([]);
+  });
+
+  it('devolve lista vazia para situação desconhecida em vez de estourar', () => {
+    expect(itensDaSituacaoRequisicao('INVENTADA')).toEqual([]);
   });
 });

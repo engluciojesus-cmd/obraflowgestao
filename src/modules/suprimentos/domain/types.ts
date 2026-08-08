@@ -56,61 +56,64 @@ export type OrdemCompraStatus =
 /** Telas com filtro de status por checkbox (docs/05 §4). */
 export type Tela = 'requisicao' | 'cotacao' | 'ordem_compra';
 
+/** Tokens do design system real (ver tailwind.config.js) — nada além disso existe. */
+export type StatusCor = 'side' | 'cta' | 'ok' | 'err';
+
 interface StatusInfo {
   label: string;
-  cor: string;
+  cor: StatusCor;
   /** false = "resolvido" — some da tela principal (docs/05 §4, regra geral). */
   pendente: boolean;
 }
 
 export const REQ_ITEM_STATUS: Record<RequisicaoItemStatus, StatusInfo> = {
-  RASCUNHO: { label: 'Rascunho', cor: 'gray', pendente: true },
-  ABERTA: { label: 'Aberta', cor: 'blue', pendente: true },
-  EM_COTACAO: { label: 'Em cotação', cor: 'amber', pendente: true },
-  COTADA: { label: 'Cotada', cor: 'amber', pendente: true },
-  EM_OC: { label: 'Em ordem de compra', cor: 'purple', pendente: true },
-  RECEBIDO_PARCIAL: { label: 'Recebido parcial', cor: 'amber', pendente: true },
-  RECEBIDA: { label: 'Recebida', cor: 'green', pendente: false },
-  REJEITADA: { label: 'Rejeitada', cor: 'red', pendente: false },
-  CANCELADA: { label: 'Cancelada', cor: 'gray', pendente: false },
+  RASCUNHO: { label: 'Rascunho', cor: 'side', pendente: true },
+  ABERTA: { label: 'Aberta', cor: 'cta', pendente: true },
+  EM_COTACAO: { label: 'Em cotação', cor: 'cta', pendente: true },
+  COTADA: { label: 'Cotada', cor: 'cta', pendente: true },
+  EM_OC: { label: 'Em ordem de compra', cor: 'cta', pendente: true },
+  RECEBIDO_PARCIAL: { label: 'Recebido parcial', cor: 'cta', pendente: true },
+  RECEBIDA: { label: 'Recebida', cor: 'ok', pendente: false },
+  REJEITADA: { label: 'Rejeitada', cor: 'err', pendente: false },
+  CANCELADA: { label: 'Cancelada', cor: 'err', pendente: false },
 } as const;
 
 export const REQUISICAO_STATUS: Record<RequisicaoStatus, StatusInfo> = {
-  RASCUNHO: { label: 'Rascunho', cor: 'gray', pendente: true },
-  ABERTA: { label: 'Aberta', cor: 'blue', pendente: true },
-  PARCIAL: { label: 'Parcial', cor: 'amber', pendente: true },
-  COTADA: { label: 'Cotada', cor: 'amber', pendente: true },
-  OC_GERADA: { label: 'Ordem de compra gerada', cor: 'purple', pendente: true },
-  CONTRATO_GERADO: { label: 'Contrato gerado', cor: 'purple', pendente: true },
-  ATENDIDA: { label: 'Atendida', cor: 'green', pendente: false },
-  REJEITADA: { label: 'Rejeitada', cor: 'red', pendente: false },
-  CANCELADA: { label: 'Cancelada', cor: 'gray', pendente: false },
+  RASCUNHO: { label: 'Rascunho', cor: 'side', pendente: true },
+  ABERTA: { label: 'Aberta', cor: 'cta', pendente: true },
+  PARCIAL: { label: 'Parcial', cor: 'cta', pendente: true },
+  COTADA: { label: 'Cotada', cor: 'cta', pendente: true },
+  OC_GERADA: { label: 'Ordem de compra gerada', cor: 'cta', pendente: true },
+  CONTRATO_GERADO: { label: 'Contrato gerado', cor: 'cta', pendente: true },
+  ATENDIDA: { label: 'Atendida', cor: 'ok', pendente: false },
+  REJEITADA: { label: 'Rejeitada', cor: 'err', pendente: false },
+  CANCELADA: { label: 'Cancelada', cor: 'err', pendente: false },
 } as const;
 
 export const COTACAO_STATUS: Record<CotacaoStatus, StatusInfo> = {
-  NOVA: { label: 'Nova', cor: 'blue', pendente: true },
-  ENVIADA: { label: 'Enviada aos fornecedores', cor: 'blue', pendente: true },
-  PENDENTE_REENVIO: { label: 'Pendente de reenvio', cor: 'amber', pendente: true },
-  RESPONDIDA_PARCIAL: { label: 'Respondida parcialmente', cor: 'amber', pendente: true },
-  RESPONDIDA: { label: 'Respondida pelos fornecedores', cor: 'amber', pendente: true },
-  OC_PARCIAL: { label: 'Ordem de compra parcial', cor: 'purple', pendente: true },
-  OC_GERADA: { label: 'Ordem de compra gerada', cor: 'green', pendente: false },
-  CONTRATO_PARCIAL: { label: 'Contrato parcial', cor: 'purple', pendente: true },
-  CONTRATO_GERADO: { label: 'Contrato gerado', cor: 'green', pendente: false },
-  CANCELADA: { label: 'Cancelada', cor: 'gray', pendente: false },
+  NOVA: { label: 'Nova', cor: 'cta', pendente: true },
+  ENVIADA: { label: 'Enviada aos fornecedores', cor: 'cta', pendente: true },
+  PENDENTE_REENVIO: { label: 'Pendente de reenvio', cor: 'cta', pendente: true },
+  RESPONDIDA_PARCIAL: { label: 'Respondida parcialmente', cor: 'cta', pendente: true },
+  RESPONDIDA: { label: 'Respondida pelos fornecedores', cor: 'cta', pendente: true },
+  OC_PARCIAL: { label: 'Ordem de compra parcial', cor: 'cta', pendente: true },
+  OC_GERADA: { label: 'Ordem de compra gerada', cor: 'ok', pendente: false },
+  CONTRATO_PARCIAL: { label: 'Contrato parcial', cor: 'cta', pendente: true },
+  CONTRATO_GERADO: { label: 'Contrato gerado', cor: 'ok', pendente: false },
+  CANCELADA: { label: 'Cancelada', cor: 'err', pendente: false },
 } as const;
 
 export const ORDEM_COMPRA_STATUS: Record<OrdemCompraStatus, StatusInfo> = {
-  EM_APROVACAO: { label: 'Em aprovação', cor: 'blue', pendente: true },
-  NAO_APROVADA: { label: 'Não aprovada', cor: 'red', pendente: false },
-  GERADA: { label: 'Gerada', cor: 'blue', pendente: true },
-  ENVIADA: { label: 'Enviada ao fornecedor', cor: 'blue', pendente: true },
-  PENDENTE_REENVIO: { label: 'Pendente de reenvio', cor: 'amber', pendente: true },
-  PROCESSADA: { label: 'Processada pelo fornecedor', cor: 'amber', pendente: true },
-  PARCIALMENTE_RECEBIDA: { label: 'Parcialmente recebida', cor: 'amber', pendente: true },
-  RECEBIDA: { label: 'Recebida', cor: 'green', pendente: false },
-  RECUSADA: { label: 'Recusada', cor: 'red', pendente: false },
-  CANCELADA: { label: 'Cancelada', cor: 'gray', pendente: false },
+  EM_APROVACAO: { label: 'Em aprovação', cor: 'cta', pendente: true },
+  NAO_APROVADA: { label: 'Não aprovada', cor: 'err', pendente: false },
+  GERADA: { label: 'Gerada', cor: 'side', pendente: true },
+  ENVIADA: { label: 'Enviada ao fornecedor', cor: 'cta', pendente: true },
+  PENDENTE_REENVIO: { label: 'Pendente de reenvio', cor: 'cta', pendente: true },
+  PROCESSADA: { label: 'Processada pelo fornecedor', cor: 'cta', pendente: true },
+  PARCIALMENTE_RECEBIDA: { label: 'Parcialmente recebida', cor: 'cta', pendente: true },
+  RECEBIDA: { label: 'Recebida', cor: 'ok', pendente: false },
+  RECUSADA: { label: 'Recusada', cor: 'err', pendente: false },
+  CANCELADA: { label: 'Cancelada', cor: 'err', pendente: false },
 } as const;
 
 // ============================================================================

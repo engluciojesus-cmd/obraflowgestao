@@ -119,6 +119,36 @@ export function statusPendentesPorTela(tela: Tela): string[] {
 }
 
 // ============================================================================
+// FILTRO DE SITUAÇÃO — por que "Cotada" não achava nada
+//
+// `requisicoes.status` é DERIVADO e só vale para o conjunto inteiro: gerar
+// cotação de 1 item de uma requisição de 3 deixa o cabeçalho em PARCIAL, não
+// em COTADA. Quem filtrava por "Cotada" esperava "requisições que têm item em
+// cotação" e recebia zero linha.
+//
+// A correção é procurar nos dois lugares: cabeçalho OU item. Este mapa diz,
+// para cada situação oferecida no filtro, quais status de ITEM contam.
+// ============================================================================
+
+const ITENS_POR_SITUACAO: Record<RequisicaoStatus, RequisicaoItemStatus[]> = {
+  RASCUNHO: ['RASCUNHO'],
+  ABERTA: ['ABERTA'],
+  COTADA: ['EM_COTACAO', 'COTADA'],
+  OC_GERADA: ['EM_OC', 'RECEBIDO_PARCIAL'],
+  ATENDIDA: ['RECEBIDA'],
+  REJEITADA: ['REJEITADA'],
+  CANCELADA: ['CANCELADA'],
+  // PARCIAL e CONTRATO_GERADO não têm status de item equivalente — são
+  // propriedades do conjunto, então só o cabeçalho responde por elas.
+  PARCIAL: [],
+  CONTRATO_GERADO: [],
+};
+
+export function itensDaSituacaoRequisicao(status: string): RequisicaoItemStatus[] {
+  return ITENS_POR_SITUACAO[status as RequisicaoStatus] ?? [];
+}
+
+// ============================================================================
 // ⭐ MAPA DE COTAÇÃO — sugestões (docs/05 §4.3)
 // sugestaoMenorValorPresente já existe: rankearFornecedores() em
 // src/modules/compras/domain/rules.ts — reutilize, não reimplemente aqui.
