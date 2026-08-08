@@ -1,91 +1,46 @@
 import Decimal from 'decimal.js';
 
-Decimal.set({ rounding: Decimal.ROUND_HALF_UP });
+Decimal.set({ rounding: Decimal.ROUND_HALF_UP, precision: 28 });
 
-export type Money = Decimal & { __brand: 'Money' };
+export type Money = Decimal & { readonly __money: true };
 
-const SCALE_VALUES = 2;
-const SCALE_UNIT = 4;
+export const dec = (value: string | number | Decimal): Money =>
+  new Decimal(value) as Money;
 
-function toMoney(d: Decimal): Money {
-  return d as unknown as Money;
-}
+export const add = (a: Money, b: Money): Money =>
+  a.plus(b) as Money;
 
-export function dec(v: number | string | Decimal, unit = false): Money {
-  const d = new Decimal(v);
-  const scale = unit ? SCALE_UNIT : SCALE_VALUES;
-  return toMoney(d.toDecimalPlaces(scale, Decimal.ROUND_HALF_UP));
-}
+export const sub = (a: Money, b: Money): Money =>
+  a.minus(b) as Money;
 
-export function fromDatabase(n: number | string): Money {
-  return dec(n, false);
-}
+export const mul = (a: Money, b: string | number | Decimal): Money =>
+  a.times(b) as Money;
 
-export function toDatabase(m: Money): number {
-  return Number(m.toFixed(SCALE_VALUES));
-}
+export const div = (a: Money, b: string | number | Decimal): Money =>
+  a.dividedBy(b).toDecimalPlaces(2, Decimal.ROUND_HALF_UP) as Money;
 
-export function add(a: Money, b: Money, unit = false): Money {
-  const scale = unit ? SCALE_UNIT : SCALE_VALUES;
-  return toMoney(a.add(b).toDecimalPlaces(scale, Decimal.ROUND_HALF_UP));
-}
+export const pct = (a: Money, percent: string | number): Money =>
+  a.times(percent).dividedBy(100).toDecimalPlaces(2) as Money;
 
-export function sub(a: Money, b: Money, unit = false): Money {
-  const scale = unit ? SCALE_UNIT : SCALE_VALUES;
-  return toMoney(a.sub(b).toDecimalPlaces(scale, Decimal.ROUND_HALF_UP));
-}
+export const isZero = (m: Money): boolean => m.isZero();
 
-export function mul(a: Money, b: Decimal | Money | number | string, unit = false): Money {
-  const bb = b instanceof Decimal ? b : new Decimal(b as any);
-  const scale = unit ? SCALE_UNIT : SCALE_VALUES;
-  return toMoney(a.mul(bb).toDecimalPlaces(scale, Decimal.ROUND_HALF_UP));
-}
+export const gt = (a: Money, b: Money): boolean => a.greaterThan(b);
+export const lt = (a: Money, b: Money): boolean => a.lessThan(b);
+export const eq = (a: Money, b: Money): boolean => a.equals(b);
+export const gte = (a: Money, b: Money): boolean => a.greaterThanOrEqualTo(b);
+export const lte = (a: Money, b: Money): boolean => a.lessThanOrEqualTo(b);
 
-export function div(a: Money, b: Decimal | Money | number | string, unit = false): Money {
-  const bb = b instanceof Decimal ? b : new Decimal(b as any);
-  const scale = unit ? SCALE_UNIT : SCALE_VALUES;
-  return toMoney(a.div(bb).toDecimalPlaces(scale, Decimal.ROUND_HALF_UP));
-}
+export const fromDatabase = (n: number | string | null | undefined): Money =>
+  n == null || n === '' ? dec(0) : dec(n);
 
-export function pct(a: Money, percent: number | string | Decimal): Money {
-  const p = percent instanceof Decimal ? percent : new Decimal(percent as any);
-  return mul(a, p.div(100));
-}
+export const toDatabase = (m: Money): number =>
+  Number(m.toFixed(2));
 
-export function isZero(a: Money): boolean {
-  return a.equals(0);
-}
-
-export function gt(a: Money, b: Money): boolean {
-  return a.gt(b);
-}
-
-export function lt(a: Money, b: Money): boolean {
-  return a.lt(b);
-}
-
-export function eq(a: Money, b: Money): boolean {
-  return a.equals(b);
-}
-
-export function formatBRL(m: Money): string {
-  return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(Number(m.toFixed(2)));
-}
-
-export const ROUND_HALF_UP = Decimal.ROUND_HALF_UP;
-
-export default {
-  dec,
-  fromDatabase,
-  toDatabase,
-  add,
-  sub,
-  mul,
-  div,
-  pct,
-  isZero,
-  gt,
-  lt,
-  eq,
-  formatBRL,
+export const formatBRL = (m: Money): string => {
+  const str = m.toFixed(2);
+  const [inteiro, decimais] = str.split('.');
+  const inteiroBRL = inteiro.replace(/\B(?=(\d{3})+(?!\d))/g, '.');
+  return `R$ ${inteiroBRL},${decimais}`;
 };
+
+export const zero: Money = dec(0);

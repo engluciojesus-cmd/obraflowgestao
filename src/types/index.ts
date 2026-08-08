@@ -39,7 +39,7 @@ export interface Company {
 // Associação usuário-empresa com role
 // Sub-módulos do módulo Compras
 export const COMPRAS_SUBMODULOS = [
-  { id: "itens", label: "Itens", to: "/erp/compras/itens" },
+  { id: "requisicoes", label: "Requisição", to: "/erp/compras/requisicoes" },
   { id: "cotacoes", label: "Cotação", to: "/erp/compras/cotacoes" },
   { id: "ordens", label: "Ordem de Compra", to: "/erp/compras/ordens" },
   { id: "contratos", label: "Contratos", to: "/erp/compras/contratos" },
@@ -62,7 +62,7 @@ export const MODULOS = [
   { id: "obras", label: "Obras", to: "/erp/obras" },
   { id: "orcamentos", label: "Orçamentos", to: "/erp/orcamentos" },
   { id: "fornecedores", label: "Fornecedores", to: "/erp/fornecedores" },
-  { id: "itens", label: "Compras — Itens", to: "/erp/compras/itens", grupo: "compras" as const },
+  { id: "requisicoes", label: "Compras — Requisição", to: "/erp/compras/requisicoes", grupo: "compras" as const },
   { id: "cotacoes", label: "Compras — Cotação", to: "/erp/compras/cotacoes", grupo: "compras" as const },
   { id: "ordens", label: "Compras — Ordem de Compra", to: "/erp/compras/ordens", grupo: "compras" as const },
   { id: "contratos", label: "Compras — Contratos", to: "/erp/compras/contratos", grupo: "compras" as const },
@@ -186,6 +186,11 @@ export interface Fornecedor {
   id: string;
   company_id: string;
   nome: string;
+  razao_social?: string | null;
+  nome_fantasia?: string | null;
+  vendedor_nome?: string | null;
+  vendedor_telefone?: string | null;
+  vendedor_email?: string | null;
   cnpj?: string | null;
   categoria?: string | null;
   avaliacao: number;
@@ -339,7 +344,12 @@ export interface CotacaoFornecedor {
   condicao_pagamento?: string | null;
   frete: number;
   observacao?: string | null;
-  fornecedor?: { nome: string } | null;
+  fornecedor?: {
+    nome: string;
+    razao_social?: string | null;
+    nome_fantasia?: string | null;
+    vendedor_nome?: string | null;
+  } | null;
 }
 
 export interface CotacaoPreco {
